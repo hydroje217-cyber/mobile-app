@@ -49,8 +49,8 @@ export default function PrimaryButton({
 function createStyles(palette, isDark, metrics) {
   return StyleSheet.create(scaleStyleDefinitions({
     button: {
-      minHeight: 52,
-      borderRadius: 16,
+      minHeight: 50,
+      borderRadius: 12,
       alignItems: 'center',
       justifyContent: 'center',
       paddingHorizontal: 18,
@@ -83,7 +83,7 @@ function createStyles(palette, isDark, metrics) {
     },
     label: {
       flexShrink: 1,
-      fontSize: 15,
+      fontSize: 14,
       lineHeight: 18,
       fontWeight: '800',
       letterSpacing: 0,

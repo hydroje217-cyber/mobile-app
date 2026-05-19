@@ -20,6 +20,7 @@ export default function ScreenShell({
   headerActionLabel,
   onHeaderActionPress,
   showMenuButton = false,
+  onAccountEditPress,
   hideThemeToggle = false,
   children,
   scroll = true,
@@ -149,6 +150,7 @@ export default function ScreenShell({
                       <Text style={styles.accountRoleText}>{profile?.role || 'user'}</Text>
                     </View>
                   </View>
+                  <View style={styles.accountMenuDivider} />
                   {!hideThemeToggle ? (
                     <PressableThemeToggle
                       isDark={isDark}
@@ -158,9 +160,21 @@ export default function ScreenShell({
                       menuItem
                     />
                   ) : null}
-                  <Pressable onPress={signOut} style={({ pressed }) => [styles.accountSignOut, pressed && styles.menuButtonPressed]}>
-                    <Ionicons name="log-out-outline" size={13} color={palette.amber500} />
-                    <Text style={styles.accountSignOutText}>Sign out</Text>
+                  {onAccountEditPress ? (
+                    <Pressable
+                      onPress={() => {
+                        setAccountOpen(false);
+                        onAccountEditPress();
+                      }}
+                      style={({ pressed }) => [styles.accountActionButton, styles.accountEditButton, pressed && styles.menuButtonPressed]}
+                    >
+                      <Ionicons name="create-outline" size={15} color={isDark ? '#A9EAF2' : '#0A6672'} />
+                      <Text style={[styles.accountActionText, styles.accountEditText]}>Edit account</Text>
+                    </Pressable>
+                  ) : null}
+                  <Pressable onPress={signOut} style={({ pressed }) => [styles.accountActionButton, styles.accountSignOut, pressed && styles.menuButtonPressed]}>
+                    <Ionicons name="log-out-outline" size={15} color={isDark ? '#F7CA72' : '#9A6700'} />
+                    <Text style={[styles.accountActionText, styles.accountSignOutText]}>Sign out</Text>
                   </Pressable>
                 </View>
               ) : null}
@@ -275,7 +289,7 @@ function PressableThemeToggle({ isDark, palette, onPress, styles, menuItem = fal
       <View style={styles.themeToggleContent}>
         <Ionicons
           name={isDark ? 'sunny-outline' : 'moon-outline'}
-          size={14}
+          size={menuItem ? 15 : 14}
           color={iconColor}
         />
         <Text style={[styles.themeToggleText, menuItem && styles.themeToggleTextMenuItem]}>
@@ -314,9 +328,9 @@ function createStyles(palette, isDark, metrics) {
       elevation: 2000,
     },
     hero: {
-      paddingTop: 10,
+      paddingTop: 8,
       paddingHorizontal: metrics.contentPadding,
-      paddingBottom: 14,
+      paddingBottom: 10,
       backgroundColor: palette.navy900,
       borderBottomWidth: 1,
       borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.08)',
@@ -358,14 +372,14 @@ function createStyles(palette, isDark, metrics) {
       minWidth: 0,
     },
     headerActionButton: {
-      width: 34,
-      height: 34,
+      width: 32,
+      height: 32,
       alignItems: 'center',
       justifyContent: 'center',
       borderWidth: 1,
       borderColor: isDark ? '#294C68' : 'rgba(191,212,231,0.8)',
       backgroundColor: isDark ? '#0C1824' : 'rgba(248,252,255,0.08)',
-      borderRadius: 10,
+      borderRadius: 8,
     },
     eyebrow: {
       color: palette.cyan300,
@@ -373,18 +387,18 @@ function createStyles(palette, isDark, metrics) {
       fontWeight: '700',
       letterSpacing: 0.8,
       textTransform: 'uppercase',
-      marginBottom: 4,
+      marginBottom: 3,
     },
     title: {
       color: palette.onAccent,
-      fontSize: 22,
+      fontSize: 20,
       fontWeight: '800',
     },
     subtitle: {
-      marginTop: 6,
+      marginTop: 4,
       color: palette.heroSubtitle,
-      fontSize: 13,
-      lineHeight: 18,
+      fontSize: 12,
+      lineHeight: 17,
     },
     statusChipRow: {
       flexDirection: 'row',
@@ -413,8 +427,8 @@ function createStyles(palette, isDark, metrics) {
       elevation: 1200,
     },
     accountIconButton: {
-      width: 40,
-      height: 40,
+      width: 38,
+      height: 38,
       alignItems: 'center',
       justifyContent: 'center',
       borderWidth: 1,
@@ -435,8 +449,8 @@ function createStyles(palette, isDark, metrics) {
       borderColor: isDark ? '#2B5877' : 'rgba(191,212,231,0.92)',
       backgroundColor: isDark ? '#0B1724' : '#F8FCFF',
       padding: 12,
-      borderRadius: 12,
-      gap: 12,
+      borderRadius: 8,
+      gap: 10,
       shadowColor: '#000000',
       shadowOpacity: isDark ? 0.24 : 0.12,
       shadowRadius: 16,
@@ -501,23 +515,39 @@ function createStyles(palette, isDark, metrics) {
       fontWeight: '900',
       textTransform: 'uppercase',
     },
-    accountSignOut: {
+    accountMenuDivider: {
+      height: 1,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.09)' : '#D8E4F0',
+    },
+    accountActionButton: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 4,
+      gap: 6,
       borderWidth: 1,
+      paddingHorizontal: 11,
+      paddingVertical: 8,
+      minHeight: 42,
+      borderRadius: 9,
+      width: '100%',
+    },
+    accountSignOut: {
       borderColor: isDark ? '#8A6514' : '#F7D6A7',
       backgroundColor: isDark ? '#33240B' : '#FFF5E8',
-      paddingHorizontal: 9,
-      paddingVertical: 5,
-      minHeight: 36,
-      borderRadius: 10,
+    },
+    accountEditButton: {
+      borderColor: isDark ? '#276A77' : '#A5DCE5',
+      backgroundColor: isDark ? '#102F3A' : '#EAFBFF',
+    },
+    accountActionText: {
+      fontSize: 11,
+      fontWeight: '900',
+    },
+    accountEditText: {
+      color: isDark ? '#A9EAF2' : '#0A6672',
     },
     accountSignOutText: {
       color: isDark ? '#F7CA72' : '#9A6700',
-      fontSize: 10,
-      fontWeight: '900',
     },
     themeToggle: {
       height: 32,
@@ -532,11 +562,11 @@ function createStyles(palette, isDark, metrics) {
       justifyContent: 'center',
     },
     themeToggleMenuItem: {
-      height: 36,
+      height: 42,
       width: '100%',
       borderColor: isDark ? '#1D8C91' : '#8ADCD6',
       backgroundColor: isDark ? '#0F3A35' : '#E5F8F6',
-      borderRadius: 10,
+      borderRadius: 9,
     },
     themeTogglePressed: {
       transform: [{ scale: 0.98 }],
@@ -545,7 +575,7 @@ function createStyles(palette, isDark, metrics) {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 4,
+      gap: 6,
     },
     themeToggleText: {
       color: palette.onAccent,
@@ -554,6 +584,7 @@ function createStyles(palette, isDark, metrics) {
     },
     themeToggleTextMenuItem: {
       color: palette.ink900,
+      fontSize: 11,
       fontWeight: '900',
     },
     content: {

@@ -1742,6 +1742,7 @@ export default function OfficeGraphsScreen({ navigation }) {
       eyebrow="Live Supabase Workspace"
       title="Graphs"
       showMenuButton
+      onAccountEditPress={navigation.openAccountEdit}
       stickyHeader
       statusChips={headerStatusChips}
       refreshing={loading}

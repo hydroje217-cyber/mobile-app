@@ -62,10 +62,10 @@ export const themes = {
     shadows: {
       card: {
         shadowColor: '#0F172A',
-        shadowOpacity: 0.08,
-        shadowRadius: 16,
-        shadowOffset: { width: 0, height: 10 },
-        elevation: 4,
+        shadowOpacity: 0.06,
+        shadowRadius: 12,
+        shadowOffset: { width: 0, height: 6 },
+        elevation: 3,
       },
     },
     statusBar: 'light',
@@ -77,9 +77,9 @@ export const themes = {
     shadows: {
       card: {
         shadowColor: '#000000',
-        shadowOpacity: 0.1,
-        shadowRadius: 12,
-        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.12,
+        shadowRadius: 10,
+        shadowOffset: { width: 0, height: 5 },
         elevation: 2,
       },
     },
@@ -101,8 +101,8 @@ export function getResponsiveMetrics(width = 390) {
     isTablet,
     isLargeTablet,
     scale,
-    contentPadding: isLargeTablet ? 28 : isTablet ? 24 : 16,
-    contentGap: isTablet ? 18 : 14,
+    contentPadding: isLargeTablet ? 26 : isTablet ? 22 : 14,
+    contentGap: isTablet ? 16 : 12,
     contentMaxWidth: isLargeTablet ? 1180 : isTablet ? 940 : undefined,
   };
 }

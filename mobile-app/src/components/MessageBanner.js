@@ -65,10 +65,10 @@ export default function MessageBanner({ tone = 'info', children }) {
 function createStyles(metrics) {
   return StyleSheet.create(scaleStyleDefinitions({
     banner: {
-      borderRadius: 16,
+      borderRadius: 10,
       borderWidth: 1,
       paddingHorizontal: 14,
-      paddingVertical: 12,
+      paddingVertical: 10,
       flexDirection: 'row',
       alignItems: 'flex-start',
       gap: 8,
@@ -78,9 +78,9 @@ function createStyles(metrics) {
     },
     text: {
       flex: 1,
-      fontSize: 14,
+      fontSize: 13,
       fontWeight: '600',
-      lineHeight: 20,
+      lineHeight: 18,
     },
   }, metrics));
 }

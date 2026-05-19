@@ -18,6 +18,7 @@ import SiteSelectionScreen from './screens/SiteSelectionScreen';
 import SubmitReadingScreen from './screens/SubmitReadingScreen';
 import ReadingHistoryScreen from './screens/ReadingHistoryScreen';
 import ResetPasswordScreen from './screens/ResetPasswordScreen';
+import AccountEditScreen from './screens/AccountEditScreen';
 
 const initialRoute = {
   name: 'home',
@@ -25,6 +26,10 @@ const initialRoute = {
 };
 
 function getBackRoute(route) {
+  if (route.name === 'account-edit') {
+    return route.params?.returnTo || initialRoute;
+  }
+
   if (route.name === 'reset-password') {
     return initialRoute;
   }
@@ -160,6 +165,14 @@ export default function NemeXusApp() {
   const navigation = useMemo(
     () => ({
       navigate: (name, params = {}) => setRoute({ name, params }),
+      openAccountEdit: () => {
+        setRoute((current) => ({
+          name: 'account-edit',
+          params: {
+            returnTo: current,
+          },
+        }));
+      },
       reset: () => setRoute(initialRoute),
       finishPasswordReset: () => {
         clearPasswordRecovery();
@@ -195,6 +208,8 @@ export default function NemeXusApp() {
     screen = <LoadingScreen />;
   } else if (!session || !profile) {
     screen = <AuthScreen initialMessage={authMessage} initialTone={authMessage ? 'error' : 'info'} />;
+  } else if (route.name === 'account-edit') {
+    screen = <AccountEditScreen navigation={navigation} />;
   } else if (!isApprovedForApp) {
     screen = <PendingApprovalScreen />;
   } else if ((routeName === 'site-selection' || routeName === 'submit-reading') && !isOperator) {

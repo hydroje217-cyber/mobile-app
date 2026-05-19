@@ -2066,6 +2066,7 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
       eyebrow="Live Supabase Workspace"
       title={activeSection === 'notifications' ? 'Notification' : 'Dashboard'}
       showMenuButton
+      onAccountEditPress={navigation.openAccountEdit}
       stickyHeader
       statusChips={headerStatusChips}
       refreshing={loading}
@@ -2485,7 +2486,7 @@ function createStyles(palette, isDark, responsiveMetrics) {
   },
   dashboardSkeletonEntity: {
     gap: 8,
-    borderRadius: 16,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: palette.line,
     backgroundColor: isDark ? palette.mist : '#FAFDFF',
@@ -2652,7 +2653,7 @@ function createStyles(palette, isDark, responsiveMetrics) {
   },
   noticeCard: {
     marginTop: 4,
-    borderRadius: 16,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: isDark ? '#A77925' : '#F7D6A7',
     backgroundColor: isDark ? '#3A2910' : '#FFF5E8',
@@ -2725,7 +2726,7 @@ function createStyles(palette, isDark, responsiveMetrics) {
   },
   entityCard: {
     gap: 8,
-    borderRadius: 16,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: palette.line,
     backgroundColor: isDark ? palette.mist : '#FAFDFF',
@@ -3132,7 +3133,7 @@ function createStyles(palette, isDark, responsiveMetrics) {
     borderColor: isDark ? 'rgba(103,232,249,0.24)' : '#BFD4E7',
     backgroundColor: isDark ? '#07131F' : '#F8FCFF',
     padding: 12,
-    borderRadius: 16,
+    borderRadius: 12,
     shadowColor: isDark ? '#38D7C2' : '#0D9488',
     shadowOpacity: isDark ? 0.18 : 0.08,
     shadowRadius: 18,
@@ -3232,7 +3233,7 @@ function createStyles(palette, isDark, responsiveMetrics) {
     gap: 10,
     borderWidth: 1,
     padding: 12,
-    borderRadius: 16,
+    borderRadius: 12,
     backgroundColor: isDark ? '#081624' : '#FFFFFF',
     shadowOpacity: isDark ? 0.18 : 0.08,
     shadowRadius: 14,

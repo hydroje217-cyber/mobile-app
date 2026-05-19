@@ -16,10 +16,10 @@ function createStyles(palette, shadows, metrics) {
   return StyleSheet.create(scaleStyleDefinitions({
     card: {
       backgroundColor: palette.card,
-      borderRadius: 22,
+      borderRadius: 12,
       borderWidth: 1,
       borderColor: palette.line,
-      padding: 16,
+      padding: 14,
       ...shadows.card,
     },
   }, metrics));

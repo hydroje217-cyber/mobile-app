@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
+    "dev": "expo start --lan",
     "start": "expo start --lan",
     "start:tunnel": "expo start --tunnel",
     "start:local": "expo start --localhost",

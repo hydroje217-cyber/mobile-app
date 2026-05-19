@@ -1484,6 +1484,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
       eyebrow="Live Supabase Workspace"
       title="Reading History"
       showMenuButton
+      onAccountEditPress={navigation.openAccountEdit}
       stickyHeader
       statusChips={headerStatusChips}
       refreshing={loading}

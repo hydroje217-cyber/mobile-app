@@ -6,9 +6,9 @@ import { useTheme } from '../context/ThemeContext';
 import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 
 const CONTROL_HEIGHTS = {
-  compact: 36,
-  field: 44,
-  action: 52,
+  compact: 34,
+  field: 42,
+  action: 50,
 };
 
 const EXPORT_OPTIONS = [
@@ -379,7 +379,7 @@ function createStyles(palette, isDark, metrics) {
       borderWidth: 1,
       paddingHorizontal: 10,
       paddingVertical: 0,
-      borderRadius: 999,
+      borderRadius: 9,
     },
     controlButtonIconOnly: {
       width: 36,
@@ -413,7 +413,7 @@ function createStyles(palette, isDark, metrics) {
       gap: 6,
       paddingHorizontal: 10,
       paddingVertical: 0,
-      borderRadius: 999,
+      borderRadius: 9,
       backgroundColor: isDark ? '#132131' : '#F3F8FD',
       borderWidth: 1,
       borderColor: palette.line,
@@ -443,7 +443,7 @@ function createStyles(palette, isDark, metrics) {
       borderWidth: 1,
       borderColor: isDark ? '#1A655E' : '#B4E5DE',
       backgroundColor: isDark ? '#102824' : '#F3FCFA',
-      borderRadius: 16,
+      borderRadius: 10,
     },
     splitButtonCompact: {
       borderColor: isDark ? '#31506E' : '#C9DDF3',
@@ -557,14 +557,14 @@ function createStyles(palette, isDark, metrics) {
       color: palette.teal600,
     },
     statusPill: {
-      height: 32,
-      minHeight: 32,
+      height: 30,
+      minHeight: 30,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 4,
       borderWidth: 1,
       paddingHorizontal: 6,
-      borderRadius: 999,
+      borderRadius: 8,
     },
     statusPill_success: {
       borderColor: isDark ? '#167C65' : '#0F9F83',
@@ -694,9 +694,13 @@ function createStyles(palette, isDark, metrics) {
     emptyState: {
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 8,
+      gap: 9,
       paddingHorizontal: 18,
-      paddingVertical: 22,
+      paddingVertical: 24,
+      borderWidth: 1,
+      borderColor: isDark ? '#203246' : '#D8E4F0',
+      backgroundColor: isDark ? '#0C1621' : '#F9FCFF',
+      borderRadius: 12,
     },
     emptyStateIcon: {
       width: 38,
@@ -725,14 +729,14 @@ function createStyles(palette, isDark, metrics) {
       letterSpacing: 0,
     },
     loadingState: {
-      minHeight: 104,
+      minHeight: 96,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 12,
       borderWidth: 1,
       borderColor: isDark ? '#203246' : '#D8E4F0',
       backgroundColor: isDark ? '#0C1621' : '#F9FCFF',
-      padding: 14,
+      padding: 12,
       borderRadius: 12,
     },
     loadingStateIcon: {

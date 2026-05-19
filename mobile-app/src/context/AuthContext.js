@@ -336,6 +336,54 @@ export function AuthProvider({ children }) {
         setPasswordRecovery({ active: false, message: '', tone: 'info' });
         return { ok: true, message: 'Password updated successfully.' };
       },
+      async updateAccountCredentials({ email, password }) {
+        if (!supabase) {
+          return { ok: false, message: 'Supabase is not configured yet.' };
+        }
+
+        const updates = {};
+        const nextEmail = email?.trim();
+
+        if (nextEmail && nextEmail !== profile?.email) {
+          updates.email = nextEmail;
+        }
+
+        if (password?.trim()) {
+          updates.password = password;
+        }
+
+        if (!updates.email && !updates.password) {
+          return { ok: false, message: 'Change your email or enter a new password before saving.' };
+        }
+
+        const { error } = await supabase.auth.updateUser(updates);
+
+        if (error) {
+          return { ok: false, message: error.message };
+        }
+
+        if (updates.email && profile?.id) {
+          const { error: profileError } = await supabase
+            .from('profiles')
+            .update({ email: updates.email })
+            .eq('id', profile.id);
+
+          if (profileError) {
+            return { ok: false, message: profileError.message || 'Account updated, but the profile email could not be refreshed.' };
+          }
+
+          setProfile((current) => (current ? { ...current, email: updates.email } : current));
+        }
+
+        return {
+          ok: true,
+          message: updates.email && updates.password
+            ? 'Email and password updated successfully.'
+            : updates.email
+              ? 'Email updated successfully.'
+              : 'Password updated successfully.',
+        };
+      },
       async signOut() {
         if (!supabase) {
           clearAuthState('');

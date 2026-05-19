@@ -376,6 +376,7 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
       title="Select site"
       subtitle={`Signed in as ${profile?.full_name || profile?.email || 'User'} (${profile?.role || 'operator'})`}
       showMenuButton
+      onAccountEditPress={navigation.openAccountEdit}
     >
       {showCheckpointSkeleton ? (
         <CheckpointSkeleton styles={styles} />
@@ -668,10 +669,10 @@ function createStyles(palette, isDark, responsiveMetrics) {
     },
     option: {
       backgroundColor: palette.card,
-      borderRadius: 22,
+      borderRadius: 12,
       borderWidth: 1,
       borderColor: palette.line,
-      padding: 16,
+      padding: 14,
       overflow: 'hidden',
     },
     optionActive: {
