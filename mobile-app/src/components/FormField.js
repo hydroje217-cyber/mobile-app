@@ -170,7 +170,7 @@ function createStyles(palette, isDark, metrics) {
       color: palette.errorText,
     },
     inputWrap: {
-      borderRadius: 16,
+      borderRadius: 10,
       borderWidth: 1,
       borderColor: palette.lineStrong,
       backgroundColor: isDark ? '#0C1621' : '#F9FCFF',
@@ -213,8 +213,8 @@ function createStyles(palette, isDark, metrics) {
       transform: [{ scale: 1.05 }],
     },
     input: {
-      minHeight: 50,
-      borderRadius: 16,
+      minHeight: 48,
+      borderRadius: 10,
       paddingHorizontal: 14,
       paddingVertical: 12,
       color: palette.ink900,

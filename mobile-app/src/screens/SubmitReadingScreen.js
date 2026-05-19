@@ -1028,6 +1028,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
         headerActionLabel="Back to site selection"
         onHeaderActionPress={navigation.goBack}
         showMenuButton
+        onAccountEditPress={navigation.openAccountEdit}
         keyboardAware
         keyboardAwareProps={{
           keyboardOpeningTime: 0,
@@ -1626,7 +1627,7 @@ function createStyles(palette, isDark, responsiveMetrics) {
     contextPill: {
       minWidth: 92,
       flexGrow: 1,
-      borderRadius: 16,
+      borderRadius: 12,
       borderWidth: 1,
       borderColor: palette.line,
       backgroundColor: isDark ? palette.mist : '#F4F9FE',
