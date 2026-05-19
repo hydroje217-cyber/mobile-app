@@ -75,6 +75,24 @@ const DEEPWELL_READING_FIELDS = [
   { key: 'tds_ppm', label: 'TDS', unit: 'ppm' },
   { key: 'power_kwh_shift', label: 'Shift power', unit: 'kWh' },
 ];
+const OPERATION_THRESHOLDS = {
+  CHLORINATION: [
+    { field: 'pressure_psi', label: 'Pressure', min: 20, max: 100, unit: 'psi' },
+    { field: 'rc_ppm', label: 'Residual chlorine', min: 0.3, max: 1.5, unit: 'ppm' },
+    { field: 'turbidity_ntu', label: 'Turbidity', min: 0, max: 5, unit: 'NTU' },
+    { field: 'ph', label: 'pH', min: 6.5, max: 7 },
+    { field: 'tds_ppm', label: 'TDS', min: 0, max: 300, unit: 'ppm' },
+  ],
+  DEEPWELL: [
+    { field: 'upstream_pressure_psi', label: 'Upstream pressure', min: 35, max: 150, unit: 'psi' },
+    { field: 'downstream_pressure_psi', label: 'Downstream pressure', min: 20, max: 100, unit: 'psi' },
+    { field: 'voltage_l1_v', label: 'Voltage L1', min: 430, max: 490, unit: 'V' },
+    { field: 'voltage_l2_v', label: 'Voltage L2', min: 430, max: 490, unit: 'V' },
+    { field: 'voltage_l3_v', label: 'Voltage L3', min: 430, max: 490, unit: 'V' },
+    { field: 'amperage_a', label: 'Amperage', min: 24, max: 46, unit: 'A' },
+    { field: 'tds_ppm', label: 'TDS', min: 0, max: 300, unit: 'ppm' },
+  ],
+};
 
 function formatMaybeTimestamp(value) {
   if (!value) {
@@ -158,6 +176,7 @@ function getRecordedValueRows(reading) {
   return fields
     .filter(({ key }) => reading[key] !== null && reading[key] !== undefined && reading[key] !== '')
     .map((field) => ({
+      key: field.key,
       label: field.label,
       value: formatRecordedValue(reading[field.key], field.unit),
     }));
@@ -375,24 +394,31 @@ function getReadingSiteName(reading) {
   return reading?.site?.name || reading?.sites?.name || (reading?.site_type === 'DEEPWELL' ? 'Deepwell site' : 'Chlorination site');
 }
 
-function addOperationRangeAlert(alerts, reading, field, label, min, max, unit = '') {
+function addOperationRangeAlert(alerts, reading, { field, label, min, max, unit = '' }) {
   const value = Number(reading?.[field]);
 
   if (!Number.isFinite(value) || (value >= min && value <= max)) {
     return;
   }
 
+  const status = value < min ? 'Low' : 'High';
+  const slotText = formatMaybeTimestamp(reading?.slot_datetime || reading?.reading_datetime || reading?.created_at);
+
   alerts.push({
-    key: `${reading.site_type || 'site'}-${reading.id || field}-${field}`,
+    key: `${reading.site_type || 'site'}-${reading.id || field}-${field}-${status.toLowerCase()}`,
     severity: value < min ? 'warning' : 'critical',
-    title: `${label} outside target`,
-    detail: `${getReadingSiteName(reading)} reported ${value}${unit ? ` ${unit}` : ''}; target is ${min}-${max}${unit ? ` ${unit}` : ''}.`,
+    title: `${label} ${status}`,
+    detail: `${getReadingSiteName(reading)} reported ${value}${unit ? ` ${unit}` : ''} for ${slotText}; normal range is ${min}-${max}${unit ? ` ${unit}` : ''}.`,
+    timestamp: reading?.created_at || reading?.reading_datetime || reading?.slot_datetime,
+    reading,
+    alertField: field,
   });
 }
 
 function buildOperationAlerts(dashboard, nowDate = new Date()) {
   const alerts = [];
   const readings = dashboard?.recentReadings ?? [];
+  const slotReadings = dashboard?.todaySlotReadings ?? [];
   const now = nowDate.getTime();
   const newestReadingTime = readings.reduce((latest, reading) => Math.max(latest, getReadingTime(reading)), 0);
   const { start, end } = getCurrentShiftWindow(nowDate);
@@ -422,20 +448,14 @@ function buildOperationAlerts(dashboard, nowDate = new Date()) {
     }
   });
 
-  readings.slice(0, 20).forEach((reading) => {
-    if (reading.site_type === 'CHLORINATION') {
-      addOperationRangeAlert(alerts, reading, 'ph', 'pH', 6.5, 8.5);
-      addOperationRangeAlert(alerts, reading, 'rc_ppm', 'Residual chlorine', 0.2, 2, 'ppm');
-      addOperationRangeAlert(alerts, reading, 'turbidity_ntu', 'Turbidity', 0, 5, 'NTU');
-      addOperationRangeAlert(alerts, reading, 'pressure_psi', 'Pressure', 15, 100, 'psi');
-    }
-
-    if (reading.site_type === 'DEEPWELL') {
-      addOperationRangeAlert(alerts, reading, 'tds_ppm', 'TDS', 0, 500, 'ppm');
-      addOperationRangeAlert(alerts, reading, 'upstream_pressure_psi', 'Upstream pressure', 15, 120, 'psi');
-      addOperationRangeAlert(alerts, reading, 'downstream_pressure_psi', 'Downstream pressure', 15, 120, 'psi');
-    }
-  });
+  slotReadings
+    .filter((reading) => getReadingTime(reading) <= now)
+    .sort((a, b) => getReadingTime(b) - getReadingTime(a))
+    .forEach((reading) => {
+      (OPERATION_THRESHOLDS[reading.site_type] || []).forEach((threshold) => {
+        addOperationRangeAlert(alerts, reading, threshold);
+      });
+    });
 
   if (dashboard?.pendingApprovals?.length) {
     alerts.push({
@@ -446,7 +466,7 @@ function buildOperationAlerts(dashboard, nowDate = new Date()) {
     });
   }
 
-  return alerts.slice(0, 8);
+  return alerts;
 }
 
 function getNotificationTimestamp(item) {
@@ -457,7 +477,7 @@ function sortNotifications(items) {
   return [...items].sort((a, b) => getNotificationTimestamp(b) - getNotificationTimestamp(a));
 }
 
-function createNotification({ key, type = 'activity', tone = 'info', iconName = 'information-circle-outline', title, description, timestamp, badge }) {
+function createNotification({ key, type = 'activity', tone = 'info', iconName = 'information-circle-outline', title, description, timestamp, badge, ...rest }) {
   return {
     key,
     type,
@@ -467,98 +487,12 @@ function createNotification({ key, type = 'activity', tone = 'info', iconName = 
     description,
     timestamp: timestamp || new Date().toISOString(),
     badge: badge || (tone === 'success' ? 'Success' : tone === 'warning' ? 'Warning' : tone === 'critical' ? 'Critical' : 'Info'),
+    ...rest,
   };
 }
 
-function buildMonitoringNotifications({ dashboard, operationAlerts, lastUpdatedAt, profile, connectionTone }) {
+function buildMonitoringNotifications({ operationAlerts, lastUpdatedAt }) {
   const notifications = [];
-  const recentReadings = dashboard?.recentReadings ?? [];
-
-  if (profile?.email) {
-    notifications.push(createNotification({
-      key: `login-${profile.id || profile.email}`,
-      type: 'activity',
-      tone: 'success',
-      iconName: 'log-in-outline',
-      title: 'Successful login',
-      description: `${profile.full_name || profile.email} is signed in to the live Supabase workspace.`,
-      timestamp: lastUpdatedAt || new Date().toISOString(),
-      badge: 'Success',
-    }));
-  }
-
-  if (lastUpdatedAt) {
-    notifications.push(createNotification({
-      key: 'sync-success',
-      type: 'sync',
-      tone: 'info',
-      iconName: 'sync-circle-outline',
-      title: 'Sync successful',
-      description: 'Dashboard data is synced with Supabase.',
-      timestamp: lastUpdatedAt,
-      badge: 'Sync',
-    }));
-  }
-
-  if (connectionTone === 'error') {
-    notifications.push(createNotification({
-      key: 'sync-failed',
-      type: 'sync',
-      tone: 'critical',
-      iconName: 'cloud-offline-outline',
-      title: 'Sync failed',
-      description: 'The dashboard could not refresh from Supabase.',
-      timestamp: new Date().toISOString(),
-      badge: 'Critical',
-    }));
-  }
-
-  recentReadings.slice(0, 8).forEach((reading) => {
-    const siteName = getReadingSiteName(reading);
-    const submittedBy = reading?.submitted_profile?.full_name || reading?.submitted_profile?.email || 'Operator';
-
-    notifications.push(createNotification({
-      key: `reading-uploaded-${reading.site_type || 'site'}-${reading.id}`,
-      type: 'activity',
-      tone: 'success',
-      iconName: 'cloud-upload-outline',
-      title: 'Reading uploaded',
-      description: `${submittedBy} uploaded a ${String(reading.site_type || 'site').toLowerCase()} reading for ${siteName}.`,
-      timestamp: reading.created_at || reading.reading_datetime,
-      badge: 'Success',
-    }));
-
-    if (reading.site_type === 'CHLORINATION') {
-      const ph = Number(reading.ph);
-      const rc = Number(reading.rc_ppm);
-
-      if (Number.isFinite(ph) && (ph < 6.5 || ph > 8.5)) {
-        notifications.push(createNotification({
-          key: `ph-alert-${reading.id}`,
-          type: 'alert',
-          tone: ph > 8.5 ? 'critical' : 'warning',
-          iconName: 'warning-outline',
-          title: 'pH outside target',
-          description: `${siteName} reported pH ${ph}. Target range is 6.5-8.5.`,
-          timestamp: reading.created_at || reading.reading_datetime,
-          badge: ph > 8.5 ? 'Critical' : 'Warning',
-        }));
-      }
-
-      if (Number.isFinite(rc) && (rc < 0.2 || rc > 2)) {
-        notifications.push(createNotification({
-          key: `rc-alert-${reading.id}`,
-          type: 'alert',
-          tone: rc > 2 ? 'critical' : 'warning',
-          iconName: 'flask-outline',
-          title: 'Residual chlorine outside target',
-          description: `${siteName} reported ${rc} ppm residual chlorine. Target range is 0.2-2 ppm.`,
-          timestamp: reading.created_at || reading.reading_datetime,
-          badge: rc > 2 ? 'Critical' : 'Warning',
-        }));
-      }
-    }
-  });
 
   operationAlerts.forEach((alert) => {
     notifications.push(createNotification({
@@ -568,8 +502,10 @@ function buildMonitoringNotifications({ dashboard, operationAlerts, lastUpdatedA
       iconName: alert.severity === 'critical' ? 'alert-circle-outline' : 'warning-outline',
       title: alert.title,
       description: alert.detail,
-      timestamp: lastUpdatedAt || new Date().toISOString(),
+      timestamp: alert.timestamp || lastUpdatedAt || new Date().toISOString(),
       badge: alert.severity,
+      reading: alert.reading,
+      alertField: alert.alertField,
     }));
   });
 
@@ -583,17 +519,6 @@ function buildMonitoringNotifications({ dashboard, operationAlerts, lastUpdatedA
       description: 'No recent readings have been received from the monitoring network.',
       timestamp: lastUpdatedAt || new Date().toISOString(),
       badge: 'Critical',
-    }));
-  } else if (recentReadings.length) {
-    notifications.push(createNotification({
-      key: 'device-reconnected',
-      type: 'sync',
-      tone: 'success',
-      iconName: 'wifi-outline',
-      title: 'Device reconnected',
-      description: 'Live readings are being received from Supabase.',
-      timestamp: recentReadings[0]?.created_at || lastUpdatedAt || new Date().toISOString(),
-      badge: 'Success',
     }));
   }
 
@@ -727,10 +652,7 @@ function OperationAlertsPanel({ alerts, palette }) {
 }
 
 const NOTIFICATION_FILTERS = [
-  { key: 'all', label: 'All' },
   { key: 'alerts', label: 'Alerts' },
-  { key: 'sync', label: 'Sync' },
-  { key: 'activity', label: 'Activity' },
 ];
 
 function NotificationCenter({
@@ -740,6 +662,7 @@ function NotificationCenter({
   filter,
   onChangeFilter,
   onMarkAllRead,
+  onPressNotification,
   palette,
 }) {
   return (
@@ -749,8 +672,8 @@ function NotificationCenter({
           <Ionicons name="notifications-outline" size={18} color={palette.cyan300} />
         </View>
         <View style={styles.notificationHeroCopy}>
-          <Text style={styles.notificationHeroTitle}>Realtime notifications</Text>
-          <Text style={styles.notificationHeroBody}>Supabase monitoring events, alerts, uploads, and sync activity.</Text>
+          <Text style={styles.notificationHeroTitle}>Realtime alerts</Text>
+          <Text style={styles.notificationHeroBody}>Threshold, missing-reading, approval, and monitoring alerts.</Text>
         </View>
         <Pressable onPress={onMarkAllRead} style={({ pressed }) => [styles.markReadButton, pressed && styles.quickActionPressed]}>
           <Text style={styles.markReadText}>Mark all as read</Text>
@@ -791,17 +714,18 @@ function NotificationCenter({
               key={item.key}
               item={item}
               unread={!readMap[item.key]}
+              onPress={onPressNotification}
             />
           ))
         ) : (
-          <MessageBanner tone="info">No notifications match this filter right now.</MessageBanner>
+          <MessageBanner tone="info">No active alerts right now.</MessageBanner>
         )}
       </View>
     </View>
   );
 }
 
-function NotificationCard({ item, unread }) {
+function NotificationCard({ item, unread, onPress }) {
   const toneStyle = {
     success: styles.notificationCardSuccess,
     warning: styles.notificationCardWarning,
@@ -821,8 +745,18 @@ function NotificationCard({ item, unread }) {
     info: styles.notificationBadgeInfo,
   }[item.tone] || styles.notificationBadgeInfo;
 
+  const isPressable = Boolean(item.reading && onPress);
+
   return (
-    <View style={[styles.notificationCard, toneStyle]}>
+    <Pressable
+      disabled={!isPressable}
+      onPress={isPressable ? () => onPress(item) : undefined}
+      style={({ pressed }) => [
+        styles.notificationCard,
+        toneStyle,
+        pressed && styles.quickActionPressed,
+      ]}
+    >
       {unread ? <View style={styles.notificationUnreadDot} /> : null}
       <View style={[styles.notificationIcon, iconStyle]}>
         <Ionicons name={item.iconName} size={17} color="#FFFFFF" />
@@ -837,7 +771,7 @@ function NotificationCard({ item, unread }) {
         <Text style={styles.notificationDescription}>{item.description}</Text>
         <Text style={styles.notificationTimestamp}>{formatRelativeTime(item.timestamp)}</Text>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -1055,7 +989,7 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [shiftFilter, setShiftFilter] = useState('current');
   const [selectedCheckpoint, setSelectedCheckpoint] = useState(null);
-  const [notificationFilter, setNotificationFilter] = useState('all');
+  const [notificationFilter, setNotificationFilter] = useState('alerts');
   const [readNotificationKeys, setReadNotificationKeys] = useState({});
   const [liveNotifications, setLiveNotifications] = useState([]);
 
@@ -1087,6 +1021,10 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
   }, [activeSection, isAdmin]);
 
   function pushLiveNotification(notification) {
+    if (notification?.type !== 'alert') {
+      return;
+    }
+
     setLiveNotifications((current) => sortNotifications([
       createNotification(notification),
       ...current,
@@ -1362,28 +1300,19 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
     () => sortNotifications([
       ...liveNotifications,
       ...buildMonitoringNotifications({
-        dashboard,
         operationAlerts,
         lastUpdatedAt,
-        profile,
-        connectionTone: tone,
       }),
     ]).filter((item, index, all) => all.findIndex((candidate) => candidate.key === item.key) === index),
-    [dashboard, lastUpdatedAt, liveNotifications, operationAlerts, profile, tone]
+    [lastUpdatedAt, liveNotifications, operationAlerts]
   );
   const filteredNotifications = useMemo(
     () =>
       notificationItems.filter((item) => {
-        if (notificationFilter === 'all') {
-          return true;
-        }
         if (notificationFilter === 'alerts') {
           return item.type === 'alert';
         }
-        if (notificationFilter === 'sync') {
-          return item.type === 'sync';
-        }
-        return item.type === 'activity';
+        return false;
       }),
     [notificationFilter, notificationItems]
   );
@@ -1405,10 +1334,10 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
     },
     {
       key: 'alerts',
-      label: `${dashboard.pendingApprovals.length} alerts`,
-      tone: dashboard.pendingApprovals.length ? 'warning' : 'neutral',
-      iconName: dashboard.pendingApprovals.length ? 'warning-outline' : 'notifications-outline',
-      iconColor: dashboard.pendingApprovals.length ? palette.amber500 : palette.ink500,
+      label: `${operationAlerts.length} alerts`,
+      tone: operationAlerts.length ? 'warning' : 'neutral',
+      iconName: operationAlerts.length ? 'warning-outline' : 'notifications-outline',
+      iconColor: operationAlerts.length ? palette.amber500 : palette.ink500,
     },
     {
       key: 'updated',
@@ -1735,6 +1664,27 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
             saveNotificationReadKeys(profile, nextReadKeys);
             saveNotificationUnreadCount(profile, 0);
           }}
+          onPressNotification={(item) => {
+            if (!item?.reading) {
+              return;
+            }
+
+            const nextReadKeys = {
+              ...readNotificationKeys,
+              [item.key]: true,
+            };
+            setReadNotificationKeys(nextReadKeys);
+            saveNotificationReadKeys(profile, nextReadKeys);
+            setSelectedCheckpoint({
+              id: item.key,
+              site: item.reading.site || item.reading.sites,
+              reading: item.reading,
+              alertField: item.alertField,
+              slot: {
+                timeLabel: formatMaybeTimestamp(item.reading.slot_datetime || item.reading.reading_datetime),
+              },
+            });
+          }}
           palette={palette}
         />
       </View>
@@ -1744,6 +1694,7 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
   function renderRecordedValuesModal() {
     const reading = selectedCheckpoint?.reading;
     const valueRows = getRecordedValueRows(reading);
+    const highlightedField = selectedCheckpoint?.alertField;
     const submitter =
       reading?.submitted_profile?.full_name ||
       reading?.submitted_profile?.email ||
@@ -1788,12 +1739,16 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
 
             <ScrollView style={styles.recordedValuesScroll} contentContainerStyle={styles.recordedValuesList}>
               {valueRows.length ? (
-                valueRows.map((row) => (
-                  <View key={row.label} style={styles.recordedValueRow}>
-                    <Text style={styles.recordedValueLabel}>{row.label}</Text>
-                    <Text style={styles.recordedValueValue}>{row.value}</Text>
-                  </View>
-                ))
+                valueRows.map((row) => {
+                  const isHighlighted = highlightedField && row.key === highlightedField;
+
+                  return (
+                    <View key={row.label} style={[styles.recordedValueRow, isHighlighted && styles.recordedValueRowAlert]}>
+                      <Text style={[styles.recordedValueLabel, isHighlighted && styles.recordedValueLabelAlert]}>{row.label}</Text>
+                      <Text style={[styles.recordedValueValue, isHighlighted && styles.recordedValueValueAlert]}>{row.value}</Text>
+                    </View>
+                  );
+                })
               ) : (
                 <MessageBanner tone="info">No numeric values were saved for this reading.</MessageBanner>
               )}
@@ -2288,11 +2243,18 @@ function createStyles(palette, isDark, responsiveMetrics) {
     paddingHorizontal: 10,
     paddingVertical: 9,
   },
+  recordedValueRowAlert: {
+    borderColor: palette.amber500,
+    backgroundColor: isDark ? '#3A2B12' : '#FFF7E6',
+  },
   recordedValueLabel: {
     flex: 1,
     color: palette.ink700,
     fontSize: 11,
     fontWeight: '800',
+  },
+  recordedValueLabelAlert: {
+    color: isDark ? '#FDE68A' : '#92400E',
   },
   recordedValueValue: {
     flexShrink: 1,
@@ -2300,6 +2262,9 @@ function createStyles(palette, isDark, responsiveMetrics) {
     fontSize: 12,
     fontWeight: '900',
     textAlign: 'right',
+  },
+  recordedValueValueAlert: {
+    color: isDark ? '#FBBF24' : '#B45309',
   },
   recordedRemarks: {
     borderRadius: 12,
