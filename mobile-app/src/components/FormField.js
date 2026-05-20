@@ -1,5 +1,5 @@
 import { forwardRef, useContext, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { Animated, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { Animated, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { KeyboardScrollContext } from './ScreenShell';
 import { useTheme } from '../context/ThemeContext';
@@ -10,6 +10,9 @@ const FormField = forwardRef(function FormField({
   value,
   onChangeText,
   icon = null,
+  trailingIcon = null,
+  onPressTrailingIcon,
+  trailingAccessibilityLabel,
   placeholder,
   keyboardType = 'default',
   multiline = false,
@@ -123,6 +126,7 @@ const FormField = forwardRef(function FormField({
             style={[
               styles.input,
               icon ? styles.inputWithIcon : null,
+              trailingIcon ? styles.inputWithTrailingIcon : null,
               multiline ? styles.multiline : null,
               !editable ? styles.disabled : null,
             ]}
@@ -134,6 +138,20 @@ const FormField = forwardRef(function FormField({
             blurOnSubmit={resolvedBlurOnSubmit}
             submitBehavior={submitBehavior}
           />
+          {trailingIcon ? (
+            <Pressable
+              onPress={onPressTrailingIcon}
+              accessibilityRole="button"
+              accessibilityLabel={trailingAccessibilityLabel}
+              hitSlop={8}
+              style={({ pressed }) => [
+                styles.trailingIconButton,
+                pressed ? styles.trailingIconButtonPressed : null,
+              ]}
+            >
+              {trailingIcon}
+            </Pressable>
+          ) : null}
         </View>
       </Animated.View>
       {errorText ? <Text style={styles.errorText}>{errorText}</Text> : null}
@@ -223,6 +241,18 @@ function createStyles(palette, isDark, metrics) {
     },
     inputWithIcon: {
       paddingLeft: 0,
+    },
+    inputWithTrailingIcon: {
+      paddingRight: 0,
+    },
+    trailingIconButton: {
+      width: 42,
+      minHeight: 48,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    trailingIconButtonPressed: {
+      opacity: 0.65,
     },
     multiline: {
       minHeight: 110,

@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "expo start --lan",
     "start": "expo start --lan",
+    "start:lan": "expo start --lan",
     "start:tunnel": "expo start --tunnel",
     "start:local": "expo start --localhost",
     "android": "expo run:android",
