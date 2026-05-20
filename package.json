@@ -2,10 +2,12 @@
   "name": "nemexus-workspace",
   "private": true,
   "scripts": {
-    "start": "npm --prefix manager-dashboard start",
-    "dev": "npm --prefix manager-dashboard run dev",
-    "web": "npm --prefix manager-dashboard run web",
-    "build": "npm --prefix manager-dashboard run build",
-    "audit:web": "npm --prefix manager-dashboard audit --omit=dev"
+    "start": "npm --prefix mobile-app start",
+    "dev": "npm --prefix mobile-app run dev",
+    "web": "npm --prefix mobile-app run web",
+    "android": "npm --prefix mobile-app run android",
+    "ios": "npm --prefix mobile-app run ios",
+    "test:production": "npm --prefix mobile-app run test:production",
+    "test:auth-recovery": "npm --prefix mobile-app run test:auth-recovery"
   }
 }

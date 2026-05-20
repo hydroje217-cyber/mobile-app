@@ -33,9 +33,11 @@ This creates:
 - `site_assignments`
 - `readings`
 - `reading_audit_log`
+- `account_login_logs`
 - row level security policies
 - a trigger to create and update profile rows from auth users
 - operator approval fields so managers/supervisors can approve access
+- login monitoring fields so admins can review sign-ins and see active account status
 - a role-based policy setup so office accounts can review registrations and readings from the web dashboard
 
 ## 4. Create users
@@ -122,3 +124,4 @@ npm run web
   - `supabase/open-site-selection.sql`
   - `supabase/approval-workflow.sql`
   - `supabase/admin-role-management.sql`
+  - `supabase/account-login-monitoring.sql`
