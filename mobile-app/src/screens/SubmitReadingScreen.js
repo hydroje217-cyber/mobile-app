@@ -16,6 +16,13 @@ import {
 } from '../services/offlineReadings';
 import { clearReadingDraft, loadReadingDraft, saveReadingDraft } from '../services/readingDrafts';
 import { createReading, getLatestReadingForSite, getReadingForSlot, updateReading } from '../services/readings';
+import {
+  buildGpsPayload,
+  evaluateSiteGeofence,
+  formatDistanceMeters,
+  getSiteCoordinates,
+  requestCurrentLocation,
+} from '../utils/geofence';
 import { parseNullableNumber } from '../utils/readings';
 import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 import { isShiftBatchEntryWindow, nextShiftBatchEntryText, shiftNameForSlot } from '../utils/shiftSchedule';
@@ -163,6 +170,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
   const [chlorination, setChlorination] = useState(initialChlorinationState);
   const [deepwell, setDeepwell] = useState(initialDeepwellState);
   const [submitting, setSubmitting] = useState(false);
+  const [locationChecking, setLocationChecking] = useState(false);
   const [showSuccessAnim, setShowSuccessAnim] = useState(false)
   const [syncingOffline, setSyncingOffline] = useState(false);
   const [offlineCount, setOfflineCount] = useState(0);
@@ -179,11 +187,41 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
   const [slotStatusLoading, setSlotStatusLoading] = useState(false);
   const [duplicateReading, setDuplicateReading] = useState(null);
   const [latestReading, setLatestReading] = useState(null);
+  const [geofenceStatus, setGeofenceStatus] = useState(null);
   const [pendingSubmission, setPendingSubmission] = useState(null);
   const [draftReady, setDraftReady] = useState(false);
   const [editNow, setEditNow] = useState(() => new Date());
 
   const isEditingReading = Boolean(editingReading?.id);
+  const siteHasGeofence = Boolean(getSiteCoordinates(site));
+  const geofenceBlocked = Boolean(siteHasGeofence && geofenceStatus && !geofenceStatus.allowed);
+  const zoneState = locationChecking
+    ? 'checking'
+    : !siteHasGeofence
+      ? 'inactive'
+      : !geofenceStatus
+        ? 'pending'
+        : geofenceStatus.allowed
+          ? 'inside'
+          : geofenceStatus.accuracyAcceptable === false
+            ? 'accuracy'
+            : 'outside';
+  const zoneLabel = {
+    inside: 'Inside zone',
+    outside: 'Outside zone',
+    accuracy: 'Low GPS accuracy',
+    checking: 'Checking GPS',
+    pending: 'Not checked yet',
+    inactive: 'No GPS fence',
+  }[zoneState];
+  const zoneIcon = {
+    inside: 'checkmark-circle',
+    outside: 'close-circle',
+    accuracy: 'warning',
+    checking: 'time-outline',
+    pending: 'locate-outline',
+    inactive: 'remove-circle-outline',
+  }[zoneState];
   const editingSlotDate = useMemo(() => {
     if (!editingReading?.slot_datetime) {
       return null;
@@ -840,6 +878,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
     }
 
     const { payload, slotDate, slotText } = pendingSubmission;
+    let finalPayload = payload;
     setPendingSubmission(null);
     setSubmitting(true);
 
@@ -858,14 +897,45 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
         return;
       }
 
+      if (siteHasGeofence) {
+        setLocationChecking(true);
+        const location = await requestCurrentLocation();
+        const nextGeofenceStatus = evaluateSiteGeofence(site, location);
+        setGeofenceStatus(nextGeofenceStatus);
+        setLocationChecking(false);
+
+        if (!nextGeofenceStatus.allowed) {
+          const accuracyNote = nextGeofenceStatus.accuracyAcceptable
+            ? ''
+            : ` GPS accuracy is ${formatDistanceMeters(
+                nextGeofenceStatus.accuracyM
+              )}; retry when it is within ${formatDistanceMeters(nextGeofenceStatus.requiredAccuracyM)}.`;
+          setResultTone('error');
+          setResultMessage(
+            `Submission rejected. You are ${formatDistanceMeters(
+              nextGeofenceStatus.distanceM
+            )} from ${site?.name || 'this site'}; authorized radius is ${formatDistanceMeters(
+              nextGeofenceStatus.radiusM
+            )}.${accuracyNote}`
+          );
+          scrollToResultMessage();
+          return;
+        }
+
+        finalPayload = {
+          ...payload,
+          ...buildGpsPayload(site, location, nextGeofenceStatus),
+        };
+      }
+
       if (isEditingReading) {
-        await updateReading(editingReading.id, payload);
+        await updateReading(editingReading.id, finalPayload);
       } else {
-        await createReading(payload);
+        await createReading(finalPayload);
       }
       setShowSuccessAnim(true);
       setResultTone('success');
-      const anomalies = getReadingAnomalies(payload);
+      const anomalies = getReadingAnomalies(finalPayload);
       setResultMessage(
         `Reading ${isEditingReading ? 'updated' : 'saved'} successfully. Saved under slot ${slotText}.${
           anomalies.length ? ` Check these unusual value(s): ${anomalies.join('; ')}.` : ''
@@ -886,7 +956,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
           return;
         }
 
-        const offlineSave = await enqueueOfflineReading(payload, {
+        const offlineSave = await enqueueOfflineReading(finalPayload, {
           site_name: site?.name || 'Unknown site',
           site_type: site?.type || 'Unknown type',
           operator_name: profile?.full_name || profile?.email || 'Unknown operator',
@@ -902,7 +972,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
         }
 
         setResultTone('success');
-        const anomalies = getReadingAnomalies(payload);
+        const anomalies = getReadingAnomalies(finalPayload);
         setResultMessage(
           `No connection detected. Reading saved offline for slot ${slotText}. Sync it when the connection returns.${
             anomalies.length ? ` Check these unusual value(s): ${anomalies.join('; ')}.` : ''
@@ -922,6 +992,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
       setResultMessage(prettyMessage);
       scrollToResultMessage();
     } finally {
+      setLocationChecking(false);
       setSubmitting(false);
     }
   }
@@ -1075,6 +1146,32 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
         </Card>
       
         <MessageBanner tone={resultTone}>{resultMessage}</MessageBanner>
+
+        <Card style={[styles.geofenceCard, geofenceBlocked ? styles.geofenceCardBlocked : null]}>
+          <View style={styles.geofenceHeader}>
+            <View style={styles.geofenceIcon}>
+              <Ionicons name="navigate-outline" size={18} color={palette.ink900} />
+            </View>
+            <View style={styles.geofenceCopy}>
+              <View style={styles.geofenceTitleRow}>
+                <Text style={styles.geofenceTitle}>GPS submit guard</Text>
+                <View style={[styles.zoneBadge, styles[`zoneBadge_${zoneState}`]]}>
+                  <Ionicons name={zoneIcon} size={13} color={palette.ink900} />
+                  <Text style={styles.zoneBadgeText}>{zoneLabel}</Text>
+                </View>
+              </View>
+              <Text style={styles.geofenceBody}>
+                {siteHasGeofence
+                  ? geofenceStatus
+                    ? `${formatDistanceMeters(geofenceStatus.distanceM)} from site; radius ${formatDistanceMeters(
+                        geofenceStatus.radiusM
+                      )}. GPS is re-checked before saving.`
+                    : 'GPS will be checked again when you confirm the reading.'
+                  : 'Coordinates are not configured for this site yet, so GPS blocking is inactive.'}
+              </Text>
+            </View>
+          </View>
+        </Card>
 
         {isEditingReading && !editWindowOpen ? (
           <MessageBanner tone="error">
@@ -1459,15 +1556,17 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 ? 'Submitting...'
                 : slotStatusLoading
                   ? 'Checking slot...'
-                  : duplicateReading
-                    ? 'Slot already saved'
-                    : isEditingReading
-                      ? 'Review and update'
-                      : 'Review and submit'
+                  : locationChecking
+                    ? 'Checking GPS...'
+                    : duplicateReading
+                      ? 'Slot already saved'
+                      : isEditingReading
+                        ? 'Review and update'
+                        : 'Review and submit'
             }
             onPress={handleSubmit}
-            loading={submitting}
-            disabled={slotStatusLoading || Boolean(duplicateReading) || (isEditingReading && !editWindowOpen)}
+            loading={submitting || locationChecking}
+            disabled={slotStatusLoading || locationChecking || Boolean(duplicateReading) || (isEditingReading && !editWindowOpen)}
             icon={<Ionicons name="save-outline" size={16} color={palette.onAccent} />}
           />
         </View>
@@ -1645,6 +1744,89 @@ function createStyles(palette, isDark, responsiveMetrics) {
       marginTop: 4,
       color: palette.ink900,
       fontSize: 13,
+      fontWeight: '800',
+    },
+    geofenceCard: {
+      gap: 12,
+      backgroundColor: isDark ? '#102738' : '#F0FAFF',
+      borderColor: isDark ? '#235979' : '#B7E5F4',
+    },
+    geofenceCardBlocked: {
+      backgroundColor: isDark ? '#24161B' : '#FFF5F6',
+      borderColor: isDark ? '#70464A' : '#F0B8BE',
+    },
+    geofenceHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    geofenceIcon: {
+      width: 36,
+      height: 36,
+      borderRadius: 999,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: isDark ? '#173A4D' : '#DDF5FC',
+      borderWidth: 1,
+      borderColor: isDark ? '#2A7694' : '#A5DDED',
+    },
+    geofenceCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    geofenceTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+      flexWrap: 'wrap',
+    },
+    geofenceTitle: {
+      color: palette.ink900,
+      fontSize: 15,
+      fontWeight: '800',
+    },
+    geofenceBody: {
+      color: palette.ink700,
+      fontSize: 12,
+      lineHeight: 18,
+    },
+    zoneBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      borderRadius: 999,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderWidth: 1,
+    },
+    zoneBadge_inside: {
+      backgroundColor: isDark ? '#112B24' : '#E7F8F1',
+      borderColor: isDark ? '#1A655E' : '#9ADFC8',
+    },
+    zoneBadge_outside: {
+      backgroundColor: isDark ? '#24161B' : '#FFF0F2',
+      borderColor: isDark ? '#70464A' : '#F0AAB4',
+    },
+    zoneBadge_accuracy: {
+      backgroundColor: isDark ? '#30240F' : '#FFF8E8',
+      borderColor: isDark ? '#6F561D' : '#E9C76F',
+    },
+    zoneBadge_checking: {
+      backgroundColor: isDark ? '#172638' : '#EEF6FF',
+      borderColor: isDark ? '#31506E' : '#BBD8F6',
+    },
+    zoneBadge_pending: {
+      backgroundColor: isDark ? '#172638' : '#EEF6FF',
+      borderColor: isDark ? '#31506E' : '#BBD8F6',
+    },
+    zoneBadge_inactive: {
+      backgroundColor: isDark ? '#202936' : '#F3F6FA',
+      borderColor: isDark ? '#3A4656' : '#D7E0EA',
+    },
+    zoneBadgeText: {
+      color: palette.ink900,
+      fontSize: 11,
       fontWeight: '800',
     },
     tipCard: {

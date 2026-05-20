@@ -1,5 +1,45 @@
 alter table public.profiles
-add column if not exists last_seen_at timestamptz;
+add column if not exists last_seen_at timestamptz,
+add column if not exists last_seen_user_agent text;
+
+create index if not exists profiles_last_seen_at_idx
+on public.profiles (last_seen_at desc);
+
+do $$
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    if not exists (
+      select 1
+      from pg_publication_tables
+      where pubname = 'supabase_realtime'
+        and schemaname = 'public'
+        and tablename = 'profiles'
+    ) then
+      alter publication supabase_realtime add table public.profiles;
+    end if;
+  end if;
+end $$;
+
+create or replace function public.update_account_presence(presence_user_agent text default null)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.profiles
+  set
+    last_seen_at = timezone('utc', now()),
+    last_seen_user_agent = left(presence_user_agent, 500)
+  where id = auth.uid();
+
+  if not found then
+    raise exception 'No profile found for the signed-in account.';
+  end if;
+end;
+$$;
+
+grant execute on function public.update_account_presence(text) to authenticated;
 
 create table if not exists public.account_login_logs (
   id uuid primary key default gen_random_uuid(),

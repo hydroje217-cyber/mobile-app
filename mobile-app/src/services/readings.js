@@ -1,23 +1,41 @@
 import { supabase } from '../lib/supabase';
 
 const CHLORINATION_SELECT =
-  'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, remarks, totalizer, pressure_psi, rc_ppm, turbidity_ntu, ph, tds_ppm, tank_level_liters, flowrate_m3hr, chlorine_consumed, peroxide_consumption, chlorination_power_kwh, status, sites(id, name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)';
+  'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, remarks, totalizer, pressure_psi, rc_ppm, turbidity_ntu, ph, tds_ppm, tank_level_liters, flowrate_m3hr, chlorine_consumed, peroxide_consumption, chlorination_power_kwh, gps_latitude, gps_longitude, gps_accuracy_m, gps_distance_m, gps_verified, gps_checked_at, status, sites(id, name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)';
 
 const DEEPWELL_SELECT =
+  'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, remarks, upstream_pressure_psi, downstream_pressure_psi, flowrate_m3hr, vfd_frequency_hz, voltage_l1_v, voltage_l2_v, voltage_l3_v, amperage_a, tds_ppm, power_kwh_shift, gps_latitude, gps_longitude, gps_accuracy_m, gps_distance_m, gps_verified, gps_checked_at, status, sites(id, name, type), submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)';
+
+const CHLORINATION_LEGACY_SELECT =
+  'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, remarks, totalizer, pressure_psi, rc_ppm, turbidity_ntu, ph, tds_ppm, tank_level_liters, flowrate_m3hr, chlorine_consumed, peroxide_consumption, chlorination_power_kwh, status, sites(id, name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)';
+
+const DEEPWELL_LEGACY_SELECT =
   'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, remarks, upstream_pressure_psi, downstream_pressure_psi, flowrate_m3hr, vfd_frequency_hz, voltage_l1_v, voltage_l2_v, voltage_l3_v, amperage_a, tds_ppm, power_kwh_shift, status, sites(id, name, type), submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)';
 
 const READING_META = {
   CHLORINATION: {
     tableName: 'chlorination_readings',
     select:
+      'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, gps_latitude, gps_longitude, gps_accuracy_m, gps_distance_m, gps_verified, gps_checked_at, submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)',
+    legacySelect:
       'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)',
+    listSelect: CHLORINATION_SELECT,
+    legacyListSelect: CHLORINATION_LEGACY_SELECT,
   },
   DEEPWELL: {
     tableName: 'deepwell_readings',
     select:
+      'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, gps_latitude, gps_longitude, gps_accuracy_m, gps_distance_m, gps_verified, gps_checked_at, submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)',
+    legacySelect:
       'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)',
+    listSelect: DEEPWELL_SELECT,
+    legacyListSelect: DEEPWELL_LEGACY_SELECT,
   },
 };
+
+function isMissingGpsColumnError(error) {
+  return /gps_|schema cache|could not find/i.test(error?.message || '');
+}
 
 function normalizeReading(row, siteType) {
   return {
@@ -141,6 +159,21 @@ export async function getReadingForSlot({ siteId, siteType, slotIso }) {
     .eq('slot_datetime', slotIso)
     .maybeSingle();
 
+  if (error && isMissingGpsColumnError(error)) {
+    const fallback = await supabase
+      .from(meta.tableName)
+      .select(meta.legacySelect)
+      .eq('site_id', siteId)
+      .eq('slot_datetime', slotIso)
+      .maybeSingle();
+
+    if (fallback.error) {
+      throw fallback.error;
+    }
+
+    return fallback.data ? normalizeReading(fallback.data, siteType) : null;
+  }
+
   if (error) {
     throw error;
   }
@@ -163,6 +196,22 @@ export async function getLatestReadingForSite({ siteId, siteType }) {
     .limit(1)
     .maybeSingle();
 
+  if (error && isMissingGpsColumnError(error)) {
+    const fallback = await supabase
+      .from(meta.tableName)
+      .select(meta.legacySelect)
+      .eq('site_id', siteId)
+      .order('slot_datetime', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (fallback.error) {
+      throw fallback.error;
+    }
+
+    return fallback.data ? normalizeReading(fallback.data, siteType) : null;
+  }
+
   if (error) {
     throw error;
   }
@@ -172,10 +221,19 @@ export async function getLatestReadingForSite({ siteId, siteType }) {
 
 export async function listReadings({ siteId, siteType, fromDate, toDate, limit }) {
   if (siteType === 'CHLORINATION') {
-    const { data, error } = await applyReadingFilters(
-      supabase.from('chlorination_readings').select(CHLORINATION_SELECT),
+    let { data, error } = await applyReadingFilters(
+      supabase.from('chlorination_readings').select(READING_META.CHLORINATION.listSelect),
       { siteId, fromDate, toDate, limit }
     );
+
+    if (error && isMissingGpsColumnError(error)) {
+      const fallback = await applyReadingFilters(
+        supabase.from('chlorination_readings').select(READING_META.CHLORINATION.legacyListSelect),
+        { siteId, fromDate, toDate, limit }
+      );
+      data = fallback.data;
+      error = fallback.error;
+    }
 
     if (error) {
       throw error;
@@ -185,10 +243,19 @@ export async function listReadings({ siteId, siteType, fromDate, toDate, limit }
   }
 
   if (siteType === 'DEEPWELL') {
-    const { data, error } = await applyReadingFilters(
-      supabase.from('deepwell_readings').select(DEEPWELL_SELECT),
+    let { data, error } = await applyReadingFilters(
+      supabase.from('deepwell_readings').select(READING_META.DEEPWELL.listSelect),
       { siteId, fromDate, toDate, limit }
     );
+
+    if (error && isMissingGpsColumnError(error)) {
+      const fallback = await applyReadingFilters(
+        supabase.from('deepwell_readings').select(READING_META.DEEPWELL.legacyListSelect),
+        { siteId, fromDate, toDate, limit }
+      );
+      data = fallback.data;
+      error = fallback.error;
+    }
 
     if (error) {
       throw error;
@@ -197,16 +264,30 @@ export async function listReadings({ siteId, siteType, fromDate, toDate, limit }
     return (data ?? []).map((row) => normalizeReading(row, 'DEEPWELL'));
   }
 
-  const [chlorinationResult, deepwellResult] = await Promise.all([
+  let [chlorinationResult, deepwellResult] = await Promise.all([
     applyReadingFilters(
-      supabase.from('chlorination_readings').select(CHLORINATION_SELECT),
+      supabase.from('chlorination_readings').select(READING_META.CHLORINATION.listSelect),
       { siteId, fromDate, toDate, limit }
     ),
     applyReadingFilters(
-      supabase.from('deepwell_readings').select(DEEPWELL_SELECT),
+      supabase.from('deepwell_readings').select(READING_META.DEEPWELL.listSelect),
       { siteId, fromDate, toDate, limit }
     ),
   ]);
+
+  if (chlorinationResult.error && isMissingGpsColumnError(chlorinationResult.error)) {
+    chlorinationResult = await applyReadingFilters(
+      supabase.from('chlorination_readings').select(READING_META.CHLORINATION.legacyListSelect),
+      { siteId, fromDate, toDate, limit }
+    );
+  }
+
+  if (deepwellResult.error && isMissingGpsColumnError(deepwellResult.error)) {
+    deepwellResult = await applyReadingFilters(
+      supabase.from('deepwell_readings').select(READING_META.DEEPWELL.legacyListSelect),
+      { siteId, fromDate, toDate, limit }
+    );
+  }
 
   if (chlorinationResult.error) {
     throw chlorinationResult.error;

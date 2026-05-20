@@ -11,6 +11,13 @@ import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 import { getOfflineReadingCount, syncOfflineReadings } from '../services/offlineReadings';
 import { getReadingForSlot, listReadings } from '../services/readings';
 import { listAccessibleSites } from '../services/sites';
+import {
+  evaluateSiteGeofence,
+  findNearestSiteGeofence,
+  formatDistanceMeters,
+  getSiteCoordinates,
+  requestCurrentLocation,
+} from '../utils/geofence';
 import { shiftNameForSlot } from '../utils/shiftSchedule';
 import { formatTimestamp, roundDownTo30MinSlot } from '../utils/time';
 
@@ -109,6 +116,10 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
   const [message, setMessage] = useState('');
   const [offlineMessage, setOfflineMessage] = useState('');
   const [offlineTone, setOfflineTone] = useState('info');
+  const [operatorLocation, setOperatorLocation] = useState(null);
+  const [locationChecking, setLocationChecking] = useState(false);
+  const [geofenceMessage, setGeofenceMessage] = useState('');
+  const [geofenceTone, setGeofenceTone] = useState('info');
   const [currentSlot, setCurrentSlot] = useState(() => roundDownTo30MinSlot(new Date()));
   const [currentSlotReading, setCurrentSlotReading] = useState(null);
   const [currentSlotReadingsBySite, setCurrentSlotReadingsBySite] = useState({});
@@ -130,6 +141,41 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
     () => sites.filter((site) => !currentSlotReadingsBySite[String(site.id)]),
     [currentSlotReadingsBySite, sites]
   );
+  const geofenceBySiteId = useMemo(() => {
+    return Object.fromEntries(
+      sites.map((site) => [String(site.id), evaluateSiteGeofence(site, operatorLocation)])
+    );
+  }, [operatorLocation, sites]);
+  const selectedGeofence = selectedSite ? geofenceBySiteId[String(selectedSite.id)] : null;
+  const selectedSiteHasGeofence = Boolean(getSiteCoordinates(selectedSite));
+  const selectedSiteBlocked = Boolean(selectedSiteHasGeofence && selectedGeofence && !selectedGeofence.allowed);
+  const selectedZoneState = locationChecking
+    ? 'checking'
+    : !selectedSiteHasGeofence
+      ? 'inactive'
+      : !operatorLocation
+        ? 'needed'
+        : selectedGeofence?.allowed
+          ? 'inside'
+          : selectedGeofence?.accuracyAcceptable === false
+            ? 'accuracy'
+            : 'outside';
+  const selectedZoneLabel = {
+    inside: 'Inside zone',
+    outside: 'Outside zone',
+    accuracy: 'Low GPS accuracy',
+    checking: 'Checking GPS',
+    needed: 'GPS needed',
+    inactive: 'No GPS fence',
+  }[selectedZoneState];
+  const selectedZoneIcon = {
+    inside: 'checkmark-circle',
+    outside: 'close-circle',
+    accuracy: 'warning',
+    checking: 'time-outline',
+    needed: 'locate-outline',
+    inactive: 'remove-circle-outline',
+  }[selectedZoneState];
 
   useEffect(() => {
     let mounted = true;
@@ -173,6 +219,66 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
   useEffect(() => {
     onSelectedSiteChange?.(selectedSite);
   }, [onSelectedSiteChange, selectedSite]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function locateOperator() {
+      if (!sites.length) {
+        return;
+      }
+
+      if (!sites.some((site) => getSiteCoordinates(site))) {
+        setGeofenceTone('info');
+        setGeofenceMessage('Site coordinates are not configured yet. GPS guard is inactive for these sites.');
+        return;
+      }
+
+      setLocationChecking(true);
+      try {
+        const location = await requestCurrentLocation();
+        if (!mounted) {
+          return;
+        }
+
+        setOperatorLocation(location);
+        const nearest = findNearestSiteGeofence(sites, location);
+        if (nearest?.result.allowed) {
+          setSelectedSite(nearest.site);
+          setGeofenceTone('success');
+          setGeofenceMessage(
+            `GPS verified near ${nearest.site.name} (${formatDistanceMeters(nearest.result.distanceM)} away).`
+          );
+        } else if (nearest) {
+          setGeofenceTone('error');
+          setGeofenceMessage(
+            `You are outside the authorized zone. Nearest site is ${nearest.site.name} (${formatDistanceMeters(
+              nearest.result.distanceM
+            )} away; allowed radius ${formatDistanceMeters(nearest.result.radiusM)}).`
+          );
+        } else {
+          setGeofenceTone('info');
+          setGeofenceMessage('Site coordinates are not configured yet. GPS guard is inactive for these sites.');
+        }
+      } catch (error) {
+        if (mounted) {
+          setOperatorLocation(null);
+          setGeofenceTone('error');
+          setGeofenceMessage(error.message || 'Unable to verify GPS location.');
+        }
+      } finally {
+        if (mounted) {
+          setLocationChecking(false);
+        }
+      }
+    }
+
+    locateOperator();
+
+    return () => {
+      mounted = false;
+    };
+  }, [sites]);
 
   useEffect(() => {
     const intervalId = setInterval(() => {
@@ -365,6 +471,81 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
     }
   }
 
+  async function refreshOperatorLocation() {
+    if (!sites.some((site) => getSiteCoordinates(site))) {
+      setOperatorLocation(null);
+      setGeofenceTone('info');
+      setGeofenceMessage('Site coordinates are not configured yet. GPS guard is inactive for these sites.');
+      return null;
+    }
+
+    setLocationChecking(true);
+    try {
+      const location = await requestCurrentLocation();
+      setOperatorLocation(location);
+      const nearest = findNearestSiteGeofence(sites, location);
+      if (nearest?.result.allowed) {
+        setSelectedSite(nearest.site);
+        setGeofenceTone('success');
+        setGeofenceMessage(
+          `GPS verified near ${nearest.site.name} (${formatDistanceMeters(nearest.result.distanceM)} away).`
+        );
+      } else if (nearest) {
+        setGeofenceTone('error');
+        setGeofenceMessage(
+          `You are outside the authorized zone. Nearest site is ${nearest.site.name} (${formatDistanceMeters(
+            nearest.result.distanceM
+          )} away; allowed radius ${formatDistanceMeters(nearest.result.radiusM)}).`
+        );
+      } else {
+        setGeofenceTone('info');
+        setGeofenceMessage('Site coordinates are not configured yet. GPS guard is inactive for these sites.');
+      }
+      return location;
+    } catch (error) {
+      setOperatorLocation(null);
+      setGeofenceTone('error');
+      setGeofenceMessage(error.message || 'Unable to verify GPS location.');
+      return null;
+    } finally {
+      setLocationChecking(false);
+    }
+  }
+
+  async function handleNavigateToSubmit(site) {
+    if (!site) {
+      return;
+    }
+
+    const siteHasGeofence = Boolean(getSiteCoordinates(site));
+    let location = operatorLocation;
+
+    if (siteHasGeofence && !location) {
+      location = await refreshOperatorLocation();
+    }
+
+    const result = evaluateSiteGeofence(site, location);
+
+    if (siteHasGeofence && !result.allowed) {
+      const accuracyNote = result.accuracyAcceptable
+        ? ''
+        : ` GPS accuracy is ${formatDistanceMeters(result.accuracyM)}; retry when it is within ${formatDistanceMeters(
+            result.requiredAccuracyM
+          )}.`;
+      setSelectedSite(site);
+      setGeofenceTone('error');
+      setGeofenceMessage(
+        `You are outside the authorized zone for ${site.name}. Move within ${formatDistanceMeters(
+          result.radiusM
+        )} and retry.${accuracyNote}`
+      );
+      return;
+    }
+
+    setSelectedSite(site);
+    navigation.navigate('submit-reading', { site });
+  }
+
   const showSiteSkeleton = loading && !sites.length;
   const showCheckpointSkeleton = showSiteSkeleton || (slotReadingsLoading && !Object.keys(currentSlotReadingsBySite).length);
   const showStatusSkeleton = showSiteSkeleton || (checkpointLoading && !selectedSite);
@@ -391,14 +572,14 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
           {pendingCurrentSlotSites.map((site) => (
             <Pressable
               key={site.id}
-              onPress={() => {
-                setSelectedSite(site);
-                navigation.navigate('submit-reading', { site });
-              }}
+              onPress={() => handleNavigateToSubmit(site)}
               style={({ pressed }) => [
                 styles.checkpointCard,
                 styles.checkpointCardDue,
                 pressed && styles.checkpointCardPressed,
+                getSiteCoordinates(site) && geofenceBySiteId[String(site.id)] && !geofenceBySiteId[String(site.id)].allowed
+                  ? styles.checkpointCardBlocked
+                  : null,
               ]}
             >
               <View style={styles.checkpointHeader}>
@@ -523,6 +704,40 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
 
       {message ? <MessageBanner tone={sites.length ? 'info' : 'error'}>{message}</MessageBanner> : null}
       {offlineMessage ? <MessageBanner tone={offlineTone}>{offlineMessage}</MessageBanner> : null}
+      {geofenceMessage ? <MessageBanner tone={geofenceTone}>{geofenceMessage}</MessageBanner> : null}
+
+      <Card style={styles.geofenceCard}>
+        <View style={styles.geofenceHeader}>
+          <View style={styles.geofenceIcon}>
+            <Ionicons name="navigate-outline" size={18} color={palette.ink900} />
+          </View>
+          <View style={styles.geofenceCopy}>
+            <View style={styles.geofenceTitleRow}>
+              <Text style={styles.geofenceTitle}>GPS authorization</Text>
+              <View style={[styles.zoneBadge, styles[`zoneBadge_${selectedZoneState}`]]}>
+                <Ionicons name={selectedZoneIcon} size={13} color={palette.ink900} />
+                <Text style={styles.zoneBadgeText}>{selectedZoneLabel}</Text>
+              </View>
+            </View>
+            <Text style={styles.geofenceBody}>
+              {locationChecking
+                ? 'Checking current location...'
+                : selectedSiteHasGeofence
+                  ? `${selectedSite?.name || 'Selected site'}: ${formatDistanceMeters(
+                      selectedGeofence?.distanceM
+                    )} away, radius ${formatDistanceMeters(selectedGeofence?.radiusM)}.`
+                  : 'Coordinates are not configured for this selected site yet.'}
+            </Text>
+          </View>
+        </View>
+        <PrimaryButton
+          label={locationChecking ? 'Checking GPS...' : 'Retry GPS check'}
+          onPress={refreshOperatorLocation}
+          loading={locationChecking}
+          tone="secondary"
+          icon={<Ionicons name="locate-outline" size={16} color={palette.ink900} />}
+        />
+      </Card>
 
       {offlineCount ? (
         <Card style={styles.offlineCard}>
@@ -553,11 +768,14 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
         <View style={styles.options}>
           {sites.map((site) => {
             const active = selectedSite?.id === site.id;
+            const siteGeofence = geofenceBySiteId[String(site.id)];
+            const siteHasGeofence = Boolean(getSiteCoordinates(site));
+            const blocked = Boolean(siteHasGeofence && siteGeofence && !siteGeofence.allowed);
             return (
               <Pressable
                 key={site.id}
                 onPress={() => setSelectedSite(site)}
-                style={[styles.option, active && styles.optionActive]}
+                style={[styles.option, active && styles.optionActive, blocked && styles.optionBlocked]}
               >
                 <View style={[styles.optionAccent, active && styles.optionAccentActive]} />
                 <View style={styles.optionTopRow}>
@@ -586,17 +804,19 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
                       color={active ? palette.onAccent : palette.ink700}
                     />
                     <Text style={[styles.optionMetaText, active && styles.optionMetaTextActive]}>
-                      Site ID {site.id}
+                      {siteHasGeofence
+                        ? `${formatDistanceMeters(siteGeofence?.distanceM)} away`
+                        : `Site ID ${site.id}`}
                     </Text>
                   </View>
                   <View style={[styles.optionMetaPill, active && styles.optionMetaPillActive]}>
                     <Ionicons
-                      name={active ? 'checkmark-circle' : 'ellipse-outline'}
+                      name={blocked ? 'lock-closed-outline' : active ? 'checkmark-circle' : 'ellipse-outline'}
                       size={12}
                       color={active ? palette.onAccent : palette.ink700}
                     />
                     <Text style={[styles.optionMetaText, active && styles.optionMetaTextActive]}>
-                      {active ? 'Selected now' : 'Tap to select'}
+                      {blocked ? 'Outside zone' : active ? 'Selected now' : 'Tap to select'}
                     </Text>
                   </View>
                 </View>
@@ -609,8 +829,8 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
       <View style={styles.actions}>
         <PrimaryButton
           label={currentSlotReading ? 'Current slot already saved' : 'Submit current checkpoint'}
-          onPress={() => (selectedSite ? navigation.navigate('submit-reading', { site: selectedSite }) : null)}
-          disabled={!selectedSite || Boolean(currentSlotReading)}
+          onPress={() => handleNavigateToSubmit(selectedSite)}
+          disabled={!selectedSite || Boolean(currentSlotReading) || selectedSiteBlocked || locationChecking}
           icon={<Ionicons name="create-outline" size={16} color={palette.onAccent} />}
         />
         {isPrivileged ? (
@@ -677,6 +897,11 @@ function createStyles(palette, isDark, responsiveMetrics) {
     optionActive: {
       backgroundColor: palette.navy700,
       borderColor: palette.cyan300,
+    },
+    optionBlocked: {
+      opacity: 0.72,
+      borderColor: isDark ? '#70464A' : '#F0B8BE',
+      backgroundColor: isDark ? '#24161B' : '#FFF5F6',
     },
     optionAccent: {
       position: 'absolute',
@@ -826,6 +1051,10 @@ function createStyles(palette, isDark, responsiveMetrics) {
       backgroundColor: isDark ? '#182235' : '#F2F6FF',
       borderColor: isDark ? '#334769' : '#C7D7F5',
     },
+    checkpointCardBlocked: {
+      backgroundColor: isDark ? '#24161B' : '#FFF5F6',
+      borderColor: isDark ? '#70464A' : '#F0B8BE',
+    },
     checkpointCardComplete: {
       backgroundColor: isDark ? '#112B24' : '#ECFCF8',
       borderColor: isDark ? '#1A655E' : '#A7E8DD',
@@ -930,6 +1159,85 @@ function createStyles(palette, isDark, responsiveMetrics) {
       gap: 12,
       backgroundColor: isDark ? '#182235' : '#F2F6FF',
       borderColor: isDark ? '#334769' : '#C7D7F5',
+    },
+    geofenceCard: {
+      gap: 12,
+      backgroundColor: isDark ? '#102738' : '#F0FAFF',
+      borderColor: isDark ? '#235979' : '#B7E5F4',
+    },
+    geofenceHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    geofenceIcon: {
+      width: 36,
+      height: 36,
+      borderRadius: 999,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: isDark ? '#173A4D' : '#DDF5FC',
+      borderWidth: 1,
+      borderColor: isDark ? '#2A7694' : '#A5DDED',
+    },
+    geofenceCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    geofenceTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+      flexWrap: 'wrap',
+    },
+    geofenceTitle: {
+      color: palette.ink900,
+      fontSize: 15,
+      fontWeight: '800',
+    },
+    geofenceBody: {
+      color: palette.ink700,
+      fontSize: 12,
+      lineHeight: 18,
+    },
+    zoneBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      borderRadius: 999,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderWidth: 1,
+    },
+    zoneBadge_inside: {
+      backgroundColor: isDark ? '#112B24' : '#E7F8F1',
+      borderColor: isDark ? '#1A655E' : '#9ADFC8',
+    },
+    zoneBadge_outside: {
+      backgroundColor: isDark ? '#24161B' : '#FFF0F2',
+      borderColor: isDark ? '#70464A' : '#F0AAB4',
+    },
+    zoneBadge_accuracy: {
+      backgroundColor: isDark ? '#30240F' : '#FFF8E8',
+      borderColor: isDark ? '#6F561D' : '#E9C76F',
+    },
+    zoneBadge_checking: {
+      backgroundColor: isDark ? '#172638' : '#EEF6FF',
+      borderColor: isDark ? '#31506E' : '#BBD8F6',
+    },
+    zoneBadge_needed: {
+      backgroundColor: isDark ? '#172638' : '#EEF6FF',
+      borderColor: isDark ? '#31506E' : '#BBD8F6',
+    },
+    zoneBadge_inactive: {
+      backgroundColor: isDark ? '#202936' : '#F3F6FA',
+      borderColor: isDark ? '#3A4656' : '#D7E0EA',
+    },
+    zoneBadgeText: {
+      color: palette.ink900,
+      fontSize: 11,
+      fontWeight: '800',
     },
     offlineHeader: {
       flexDirection: 'row',

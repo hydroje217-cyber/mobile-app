@@ -93,10 +93,23 @@ async function updateLastSeen(userId) {
     return;
   }
 
-  await supabase
+  const clientInfo = getClientInfo();
+  const rpcResult = await supabase.rpc('update_account_presence', {
+    presence_user_agent: clientInfo.userAgent || null,
+  });
+
+  if (!rpcResult.error) {
+    return;
+  }
+
+  const { error } = await supabase
     .from('profiles')
     .update({ last_seen_at: new Date().toISOString() })
     .eq('id', userId);
+
+  if (error) {
+    throw error;
+  }
 }
 
 function isMissingColumnError(error) {
@@ -354,7 +367,9 @@ export function AuthProvider({ children }) {
     }
 
     const touch = () => {
-      updateLastSeen(session.user.id);
+      updateLastSeen(session.user.id).catch((error) => {
+        console.warn('Unable to update account presence.', error);
+      });
     };
 
     touch();

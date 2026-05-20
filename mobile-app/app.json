@@ -20,7 +20,10 @@
       "backgroundColor": "#030A11"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Nemexus uses your location to confirm readings are submitted from the assigned facility."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -36,6 +39,12 @@
     },
     "plugins": [
       "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Nemexus uses your location to confirm readings are submitted from the assigned facility."
+        }
+      ],
       [
         "expo-splash-screen",
         {
