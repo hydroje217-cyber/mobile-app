@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import * as ExpoLinking from 'expo-linking';
+import { AppState, Platform } from 'react-native';
 import { supabase, supabaseReady } from '../lib/supabase';
 import { isRecoveryUrl, readRecoveryParams } from '../utils/authRecovery';
 
@@ -16,7 +17,7 @@ async function ensureProfile(user) {
 
   let query = await supabase
     .from('profiles')
-    .select('id, email, full_name, role, is_active, is_approved, approved_at, approved_by')
+    .select('id, email, full_name, role, is_active, is_approved, approved_at, approved_by, last_seen_at')
     .eq('id', user.id)
     .maybeSingle();
 
@@ -40,7 +41,7 @@ async function ensureProfile(user) {
 
     query = await supabase
       .from('profiles')
-      .select('id, email, full_name, role, is_active, is_approved, approved_at, approved_by')
+      .select('id, email, full_name, role, is_active, is_approved, approved_at, approved_by, last_seen_at')
       .eq('id', user.id)
       .maybeSingle();
 
@@ -50,6 +51,112 @@ async function ensureProfile(user) {
   }
 
   return query.data;
+}
+
+function getClientInfo() {
+  const userAgent =
+    Platform.OS === 'web' && typeof navigator !== 'undefined'
+      ? navigator.userAgent
+      : `${Platform.OS} ${Platform.Version || ''}`.trim();
+  const browser =
+    Platform.OS === 'web'
+      ? userAgent.includes('Edg/')
+        ? 'Microsoft Edge'
+        : userAgent.includes('Chrome/')
+          ? 'Chrome'
+          : userAgent.includes('Safari/') && !userAgent.includes('Chrome/')
+            ? 'Safari'
+            : userAgent.includes('Firefox/')
+              ? 'Firefox'
+              : 'Web browser'
+      : Platform.OS === 'ios'
+        ? 'NemeXus iOS app'
+        : Platform.OS === 'android'
+          ? 'NemeXus Android app'
+          : 'NemeXus mobile app';
+  const device =
+    Platform.OS === 'web'
+      ? /Mobi|Android|iPhone|iPad/i.test(userAgent)
+        ? 'Mobile web'
+        : 'Desktop web'
+      : Platform.OS === 'ios'
+        ? 'iOS device'
+        : Platform.OS === 'android'
+          ? 'Android device'
+          : Platform.OS;
+
+  return { browser, device, userAgent };
+}
+
+async function updateLastSeen(userId) {
+  if (!supabase || !userId) {
+    return;
+  }
+
+  await supabase
+    .from('profiles')
+    .update({ last_seen_at: new Date().toISOString() })
+    .eq('id', userId);
+}
+
+function isMissingColumnError(error) {
+  return (
+    error?.code === '42703' ||
+    error?.code === 'PGRST204' ||
+    /column .* does not exist/i.test(error?.message || '') ||
+    /could not find .* column/i.test(error?.message || '')
+  );
+}
+
+async function insertLoginLogWithFallback(loginLog) {
+  const attempts = [
+    loginLog,
+    (({ user_id: _userId, ...rest }) => rest)(loginLog),
+    (({ user_id: _userId, browser: _browser, device: _device, ...rest }) => rest)(loginLog),
+    {
+      email: loginLog.email,
+      role: loginLog.role,
+      user_agent: loginLog.user_agent,
+    },
+    {
+      email: loginLog.email,
+      role: loginLog.role,
+    },
+  ];
+  let lastError = null;
+
+  for (const payload of attempts) {
+    const { error } = await supabase.from('account_login_logs').insert(payload);
+
+    if (!error) {
+      return;
+    }
+
+    lastError = error;
+
+    if (!isMissingColumnError(error)) {
+      throw error;
+    }
+  }
+
+  throw lastError;
+}
+
+async function recordSuccessfulLogin(user, profile) {
+  if (!supabase || !user) {
+    return;
+  }
+
+  const clientInfo = getClientInfo();
+  const loginLog = {
+    user_id: user.id,
+    email: profile?.email || user.email,
+    role: profile?.role || 'operator',
+    browser: clientInfo.browser,
+    device: clientInfo.device,
+    user_agent: clientInfo.userAgent,
+  };
+  await insertLoginLogWithFallback(loginLog);
 }
 
 export function AuthProvider({ children }) {
@@ -241,6 +348,29 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (!supabase || !session?.user?.id) {
+      return undefined;
+    }
+
+    const touch = () => {
+      updateLastSeen(session.user.id);
+    };
+
+    touch();
+    const intervalId = setInterval(touch, 60000);
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        touch();
+      }
+    });
+
+    return () => {
+      clearInterval(intervalId);
+      subscription.remove();
+    };
+  }, [session?.user?.id]);
+
   const value = useMemo(
     () => ({
       session,
@@ -262,9 +392,17 @@ export function AuthProvider({ children }) {
           return { ok: false, message: 'Supabase is not configured yet.' };
         }
 
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) {
           return { ok: false, message: error.message };
+        }
+
+        try {
+          const nextProfile = await ensureProfile(data.user);
+          await updateLastSeen(data.user?.id);
+          await recordSuccessfulLogin(data.user, nextProfile);
+        } catch (logError) {
+          console.warn('Unable to record login monitoring data.', logError);
         }
 
         setPendingApprovalMessage('');

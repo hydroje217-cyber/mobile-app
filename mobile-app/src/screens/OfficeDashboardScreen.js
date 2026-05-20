@@ -158,6 +158,29 @@ function formatHeaderUpdatedTime(value) {
   });
 }
 
+function getAccountPresence(profile, now = Date.now()) {
+  if (!profile?.last_seen_at) {
+    return { label: 'Never seen', tone: 'neutral', detail: 'No activity recorded' };
+  }
+
+  const parsed = new Date(profile.last_seen_at);
+  if (Number.isNaN(parsed.getTime())) {
+    return { label: 'Seen', tone: 'neutral', detail: String(profile.last_seen_at) };
+  }
+
+  const ageMs = Math.max(0, now - parsed.getTime());
+
+  if (ageMs <= 2 * 60 * 1000) {
+    return { label: 'Active now', tone: 'success', detail: 'Online recently' };
+  }
+
+  if (ageMs <= 30 * 60 * 1000) {
+    return { label: 'Recently seen', tone: 'warning', detail: formatRelativeTime(profile.last_seen_at, now) };
+  }
+
+  return { label: 'Last seen', tone: 'neutral', detail: formatRelativeTime(profile.last_seen_at, now) };
+}
+
 function formatRecordedValue(value, unit) {
   if (value === null || value === undefined || value === '') {
     return '-';
@@ -592,6 +615,21 @@ function RoleBadge({ role }) {
   );
 }
 
+function PresenceBadge({ presence }) {
+  const appearance = {
+    success: styles.presenceBadgeSuccess,
+    warning: styles.presenceBadgeWarning,
+    neutral: styles.presenceBadgeNeutral,
+  }[presence?.tone] || styles.presenceBadgeNeutral;
+
+  return (
+    <View style={[styles.presenceBadge, appearance]}>
+      <View style={[styles.presenceDot, presence?.tone === 'success' && styles.presenceDotActive]} />
+      <Text style={styles.presenceBadgeText}>{presence?.label || 'Never seen'}</Text>
+    </View>
+  );
+}
+
 function OperationAlertsPanel({ alerts, palette }) {
   const hasAlerts = alerts.length > 0;
   const [expandedAlerts, setExpandedAlerts] = useState({});
@@ -973,6 +1011,7 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
     sites: [],
     todaySlotReadings: [],
     profiles: [],
+    loginLogs: [],
     monthlyProduction: {
       totalProduction: 0,
       averageProduction: 0,
@@ -1052,7 +1091,7 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
     }
 
     try {
-      const nextDashboard = await getOfficeDashboardSnapshot();
+      const nextDashboard = await getOfficeDashboardSnapshot({ includeLoginLogs: canManageAccounts });
       setDashboard(nextDashboard);
       setLastUpdatedAt(new Date());
 
@@ -1151,6 +1190,18 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
   }, []);
 
   useEffect(() => {
+    if (!canManageAccounts) {
+      return undefined;
+    }
+
+    const intervalId = setInterval(() => {
+      loadDashboard({ silent: true });
+    }, 60000);
+
+    return () => clearInterval(intervalId);
+  }, [canManageAccounts]);
+
+  useEffect(() => {
     if (!supabase || !OFFICE_MONITOR_ROLES.includes(profile?.role)) {
       return undefined;
     }
@@ -1191,6 +1242,7 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
   const roleFilterOptions = useMemo(
     () => [
       { key: 'all', label: 'All', iconName: 'apps-outline' },
+      { key: 'active', label: 'Active', iconName: 'radio-button-on' },
       { key: 'operator', label: 'Operators', iconName: 'construct-outline' },
       { key: 'supervisor', label: 'Supervisors', iconName: 'shield-checkmark-outline' },
       { key: 'manager', label: 'Managers', iconName: 'briefcase-outline' },
@@ -1205,8 +1257,13 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
       return dashboard.profiles;
     }
 
+    if (roleFilter === 'active') {
+      const now = currentTime.getTime();
+      return dashboard.profiles.filter((item) => getAccountPresence(item, now).label === 'Active now');
+    }
+
     return dashboard.profiles.filter((item) => item.role === roleFilter);
-  }, [dashboard.profiles, roleFilter]);
+  }, [currentTime, dashboard.profiles, roleFilter]);
 
   const recentReadingFilterOptions = useMemo(
     () => [
@@ -1442,6 +1499,18 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
               actionLabel="Open"
               onPress={() => setActiveSection('roles')}
               iconName="people-circle-outline"
+              iconColor={palette.ink900}
+              actionIconColor={isDark ? palette.ink900 : palette.navy700}
+            />
+          ) : null}
+          {canManageAccounts ? (
+            <SummaryCard
+              title="Login logs"
+              value={dashboard.loginLogs.length}
+              body="Review recent account sign-ins, roles, and browser or device details."
+              actionLabel="Open"
+              onPress={() => setActiveSection('loginLogs')}
+              iconName="finger-print-outline"
               iconColor={palette.ink900}
               actionIconColor={isDark ? palette.ink900 : palette.navy700}
             />
@@ -1976,7 +2045,10 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
                     <Text style={styles.rowTitle}>{item.full_name || item.email || 'Unnamed user'}</Text>
                     <Text style={styles.rowMeta}>{item.email || '-'}</Text>
                   </View>
-                  <RoleBadge role={item.role} />
+                  <View style={styles.accountBadgeStack}>
+                    <RoleBadge role={item.role} />
+                    <PresenceBadge presence={getAccountPresence(item, currentTime.getTime())} />
+                  </View>
                 </View>
 
                 <View style={styles.metaStrip}>
@@ -1987,6 +2059,12 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
                   <View style={styles.metaPill}>
                     <Text style={styles.metaPillLabel}>Created</Text>
                     <Text style={styles.metaPillValue}>{formatMaybeTimestamp(item.created_at)}</Text>
+                  </View>
+                  <View style={styles.metaPill}>
+                    <Text style={styles.metaPillLabel}>Last seen</Text>
+                    <Text style={styles.metaPillValue}>
+                      {item.last_seen_at ? formatMaybeTimestamp(item.last_seen_at) : 'Never'}
+                    </Text>
                   </View>
                 </View>
 
@@ -2057,6 +2135,60 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
     );
   }
 
+  function renderLoginLogs() {
+    if (!canManageAccounts) {
+      return null;
+    }
+
+    return (
+      <Card style={styles.panelCard}>
+        <SectionHeader
+          title="Login logs"
+          body="Recent successful sign-ins with account, role, and browser or device details."
+          iconName="finger-print-outline"
+          iconColor={palette.teal600}
+        />
+
+        {dashboard.loginLogs.length ? (
+          <View style={styles.list}>
+            {dashboard.loginLogs.map((item) => (
+              <EntityCard key={item.id}>
+                <View style={styles.entityHeader}>
+                  <View style={styles.rowCopy}>
+                    <Text style={styles.rowTitle}>{item.profile?.full_name || item.email || 'Unknown account'}</Text>
+                    <Text style={styles.rowMeta}>{item.email || item.profile?.email || '-'}</Text>
+                  </View>
+                  <RoleBadge role={item.role} />
+                </View>
+
+                <View style={styles.metaStrip}>
+                  <View style={styles.metaPill}>
+                    <Text style={styles.metaPillLabel}>Logged in</Text>
+                    <Text style={styles.metaPillValue}>{formatMaybeTimestamp(item.created_at)}</Text>
+                  </View>
+                  <View style={styles.metaPill}>
+                    <Text style={styles.metaPillLabel}>Browser</Text>
+                    <Text style={styles.metaPillValue}>{item.browser || '-'}</Text>
+                  </View>
+                  <View style={styles.metaPill}>
+                    <Text style={styles.metaPillLabel}>Device</Text>
+                    <Text style={styles.metaPillValue}>{item.device || '-'}</Text>
+                  </View>
+                </View>
+
+                {item.user_agent ? (
+                  <Text style={styles.loginUserAgent} numberOfLines={2}>{item.user_agent}</Text>
+                ) : null}
+              </EntityCard>
+            ))}
+          </View>
+        ) : (
+          <MessageBanner tone="info">No successful login records have been captured yet.</MessageBanner>
+        )}
+      </Card>
+    );
+  }
+
   function renderSection() {
     if (activeSection === 'notifications') {
       return renderNotifications();
@@ -2072,6 +2204,10 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
 
     if (activeSection === 'roles') {
       return renderRoles();
+    }
+
+    if (activeSection === 'loginLogs') {
+      return renderLoginLogs();
     }
 
     return renderOverview();
@@ -2887,6 +3023,53 @@ function createStyles(palette, isDark, responsiveMetrics) {
     fontSize: 9,
     fontWeight: '800',
     letterSpacing: 0.3,
+  },
+  accountBadgeStack: {
+    alignItems: 'flex-end',
+    gap: 5,
+    flexShrink: 0,
+  },
+  presenceBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+  },
+  presenceBadgeSuccess: {
+    backgroundColor: isDark ? '#0D3A2D' : '#ECFDF5',
+    borderColor: isDark ? '#2F8F72' : '#A7F3D0',
+  },
+  presenceBadgeWarning: {
+    backgroundColor: isDark ? '#3A2910' : '#FFF7ED',
+    borderColor: isDark ? '#A77925' : '#FED7AA',
+  },
+  presenceBadgeNeutral: {
+    backgroundColor: isDark ? '#172A3F' : '#F1F5F9',
+    borderColor: isDark ? '#41678A' : '#CBD5E1',
+  },
+  presenceDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: isDark ? '#94A3B8' : '#64748B',
+  },
+  presenceDotActive: {
+    backgroundColor: '#22C55E',
+  },
+  presenceBadgeText: {
+    color: isDark ? palette.ink900 : palette.navy900,
+    fontSize: 8,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  loginUserAgent: {
+    color: palette.ink500,
+    fontSize: 9,
+    lineHeight: 13,
+    fontWeight: '700',
   },
   statusBadge: {
     borderRadius: 999,

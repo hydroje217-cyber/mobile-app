@@ -10,6 +10,9 @@ import {
 
 const DAILY_SUMMARY_SELECT =
   'id, site_id, summary_date, source, source_file, production_m3, power_kwh, chlorine_kg, peroxide_liters, site:sites(id, name, type)';
+const PROFILE_SELECT = 'id, email, full_name, role, is_active, is_approved, approved_at, created_at, last_seen_at';
+const LOGIN_LOG_SELECT = 'id, user_id, email, role, browser, device, user_agent, created_at, profile:profiles(full_name, email)';
+const BASIC_LOGIN_LOG_SELECT = 'id, user_id, email, role, browser, device, user_agent, created_at';
 
 function requireSupabase() {
   if (!supabase) {
@@ -21,6 +24,67 @@ function throwIfError(result, fallbackMessage) {
   if (result.error) {
     throw new Error(result.error.message || fallbackMessage);
   }
+}
+
+function isMissingColumnError(error) {
+  return (
+    error?.code === '42703' ||
+    error?.code === 'PGRST204' ||
+    /column .* does not exist/i.test(error?.message || '') ||
+    /could not find .* column/i.test(error?.message || '')
+  );
+}
+
+async function fetchLoginLogs({ includeLoginLogs }) {
+  if (!includeLoginLogs) {
+    return { data: [], error: null };
+  }
+
+  const fullResult = await supabase
+    .from('account_login_logs')
+    .select(LOGIN_LOG_SELECT)
+    .order('created_at', { ascending: false })
+    .limit(30);
+
+  if (!fullResult.error) {
+    return fullResult;
+  }
+
+  if (!isMissingColumnError(fullResult.error)) {
+    return fullResult;
+  }
+
+  const basicResult = await supabase
+    .from('account_login_logs')
+    .select(BASIC_LOGIN_LOG_SELECT)
+    .order('created_at', { ascending: false })
+    .limit(30);
+
+  if (!basicResult.error) {
+    return basicResult;
+  }
+
+  if (!isMissingColumnError(basicResult.error)) {
+    return basicResult;
+  }
+
+  const legacyResult = await supabase
+    .from('account_login_logs')
+    .select('*')
+    .limit(30);
+
+  if (!legacyResult.error) {
+    return {
+      data: [...(legacyResult.data ?? [])].sort(
+        (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+      ),
+      error: null,
+    };
+  }
+
+  return isMissingColumnError(legacyResult.error)
+    ? { data: [], error: null }
+    : legacyResult;
 }
 
 function startOfTodayIso() {
@@ -50,6 +114,93 @@ function normalizeOfficeReading(row, siteType) {
 
 function sortByCreatedAtDesc(a, b) {
   return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+}
+
+function getLoginLogTimestamp(row = {}) {
+  return (
+    row.created_at ||
+    row.logged_in_at ||
+    row.login_at ||
+    row.login_time ||
+    row.timestamp ||
+    row.inserted_at ||
+    row.updated_at ||
+    null
+  );
+}
+
+function getBrowserFromUserAgent(userAgent = '') {
+  if (!userAgent) {
+    return '';
+  }
+
+  if (userAgent.includes('Edg/')) {
+    return 'Microsoft Edge';
+  }
+
+  if (userAgent.includes('OPR/') || userAgent.includes('Opera/')) {
+    return 'Opera';
+  }
+
+  if (userAgent.includes('Firefox/')) {
+    return 'Firefox';
+  }
+
+  if (userAgent.includes('Chrome/') || userAgent.includes('CriOS/')) {
+    return 'Chrome';
+  }
+
+  if (userAgent.includes('Safari/')) {
+    return 'Safari';
+  }
+
+  return 'Browser';
+}
+
+function getDeviceFromUserAgent(userAgent = '') {
+  if (!userAgent) {
+    return '';
+  }
+
+  if (/iPad/i.test(userAgent)) {
+    return 'iPad';
+  }
+
+  if (/iPhone/i.test(userAgent)) {
+    return 'iPhone';
+  }
+
+  if (/Android/i.test(userAgent)) {
+    return /Mobile/i.test(userAgent) ? 'Android phone' : 'Android tablet';
+  }
+
+  if (/Windows/i.test(userAgent)) {
+    return 'Windows desktop';
+  }
+
+  if (/Macintosh|Mac OS/i.test(userAgent)) {
+    return 'Mac desktop';
+  }
+
+  if (/Linux/i.test(userAgent)) {
+    return 'Linux desktop';
+  }
+
+  return 'Device';
+}
+
+function normalizeLoginLog(row = {}) {
+  const userAgent = row.user_agent || row.userAgent || row.ua || '';
+
+  return {
+    ...row,
+    email: row.email || row.profile?.email || '',
+    role: row.role || row.profile?.role || 'operator',
+    browser: row.browser || getBrowserFromUserAgent(userAgent),
+    device: row.device || getDeviceFromUserAgent(userAgent),
+    user_agent: userAgent,
+    created_at: getLoginLogTimestamp(row),
+  };
 }
 
 function getMonthProductionRange({ year, monthIndex }) {
@@ -179,7 +330,7 @@ export async function getDailyProductionForMonth({ year, monthIndex }) {
   });
 }
 
-export async function getOfficeDashboardSnapshot({ limit = 12 } = {}) {
+export async function getOfficeDashboardSnapshot({ limit = 12, includeLoginLogs = false } = {}) {
   requireSupabase();
 
   const todayIso = startOfTodayIso();
@@ -197,13 +348,14 @@ export async function getOfficeDashboardSnapshot({ limit = 12 } = {}) {
     todayChlorinationSlotsResult,
     todayDeepwellSlotsResult,
     profilesResult,
+    loginLogsResult,
     monthlyChlorinationReadingsResult,
     monthlyDeepwellReadingsResult,
     dailySummariesResult,
   ] = await Promise.all([
     supabase
       .from('profiles')
-      .select('id, email, full_name, role, is_active, is_approved, created_at')
+      .select('id, email, full_name, role, is_active, is_approved, created_at, last_seen_at')
       .eq('role', 'operator')
       .eq('is_active', true)
       .eq('is_approved', false)
@@ -263,9 +415,10 @@ export async function getOfficeDashboardSnapshot({ limit = 12 } = {}) {
       .order('slot_datetime', { ascending: true }),
     supabase
       .from('profiles')
-      .select('id, email, full_name, role, is_active, is_approved, approved_at, created_at')
+      .select(PROFILE_SELECT)
       .order('created_at', { ascending: false })
       .limit(20),
+    fetchLoginLogs({ includeLoginLogs }),
     supabase
       .from('chlorination_readings')
       .select('id, site_id, status, created_at, reading_datetime, slot_datetime, totalizer, chlorine_consumed, peroxide_consumption, chlorination_power_kwh')
@@ -294,6 +447,9 @@ export async function getOfficeDashboardSnapshot({ limit = 12 } = {}) {
   throwIfError(todayChlorinationSlotsResult, 'Failed to load today chlorination slots.');
   throwIfError(todayDeepwellSlotsResult, 'Failed to load today deepwell slots.');
   throwIfError(profilesResult, 'Failed to load account roles.');
+  if (includeLoginLogs) {
+    throwIfError(loginLogsResult, 'Failed to load login logs.');
+  }
   throwIfError(monthlyChlorinationReadingsResult, 'Failed to load monthly chlorination production.');
   throwIfError(monthlyDeepwellReadingsResult, 'Failed to load monthly deepwell power consumption.');
   throwIfError(dailySummariesResult, 'Failed to load historical daily summaries.');
@@ -323,6 +479,7 @@ export async function getOfficeDashboardSnapshot({ limit = 12 } = {}) {
     sites: sitesResult.data ?? [],
     todaySlotReadings,
     profiles: profilesResult.data ?? [],
+    loginLogs: (loginLogsResult.data ?? []).map(normalizeLoginLog),
     monthlyProduction: buildMonthlyProduction(monthlyChlorinationReadingsResult.data ?? [], {
       dailySummaries: dailySummariesResult.data ?? [],
     }),
