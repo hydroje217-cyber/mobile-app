@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { Animated, Image, Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import FormField from '../components/FormField';
 import MessageBanner from '../components/MessageBanner';
@@ -14,9 +14,11 @@ export default function AuthScreen({ initialMessage = '', initialTone = 'info' }
   const { width, height } = useWindowDimensions();
   const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
   const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics, height), [palette, isDark, responsiveMetrics, height]);
-  const useMobileLoginCard = width < 620;
+  const useMobileLoginCard = width < 900;
+  const useFocusOverlay = width < 620;
   const overlayInputRef = useRef(null);
   const isSwitchingOverlayField = useRef(false);
+  const themeSwitchAnim = useRef(new Animated.Value(isDark ? 1 : 0)).current;
   const [mode, setMode] = useState('sign-in');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -36,7 +38,29 @@ export default function AuthScreen({ initialMessage = '', initialTone = 'info' }
       : overlayField === 'email'
         ? 'Enter your work email'
         : 'Minimum 6 characters';
-  const focusPanelBottom = keyboardHeight ? keyboardHeight + (overlayField === 'password' ? 58 : 28) : 300;
+  const focusPanelBottom = keyboardHeight
+    ? keyboardHeight + (overlayField === 'password' ? 58 : 28)
+    : 300;
+  const themeMoonScale = themeSwitchAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 0],
+  });
+  const themeMoonRotate = themeSwitchAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+  const themeSunScale = themeSwitchAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 1],
+  });
+  const themeSunRotate = themeSwitchAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+  const themeIconBackground = themeSwitchAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['#FFFFFF', '#111827'],
+  });
 
   useEffect(() => {
     if (!overlayField) {
@@ -68,6 +92,26 @@ export default function AuthScreen({ initialMessage = '', initialTone = 'info' }
       keyboardHideSubscription.remove();
     };
   }, []);
+
+  useEffect(() => {
+    Animated.timing(themeSwitchAnim, {
+      toValue: isDark ? 1 : 0,
+      duration: 400,
+      useNativeDriver: true,
+    }).start();
+  }, [isDark, themeSwitchAnim]);
+
+  useEffect(() => {
+    if (!message) {
+      return undefined;
+    }
+
+    const dismissTimer = setTimeout(() => {
+      setMessage('');
+    }, 3000);
+
+    return () => clearTimeout(dismissTimer);
+  }, [message]);
 
   async function handleSubmit() {
     setLoading(true);
@@ -171,7 +215,7 @@ export default function AuthScreen({ initialMessage = '', initialTone = 'info' }
     );
   }
 
-  const loginOverlay = useMobileLoginCard && overlayField ? (
+  const loginOverlay = useFocusOverlay && overlayField ? (
     <View style={styles.focusOverlay}>
       <Pressable onPress={closeOverlayField} style={styles.focusOverlayBackdrop} />
       <View pointerEvents="box-none" style={styles.focusPanelWrapper}>
@@ -221,20 +265,28 @@ export default function AuthScreen({ initialMessage = '', initialTone = 'info' }
         onPress={toggleTheme}
         style={({ pressed }) => [styles.themeSwitchWrap, pressed ? styles.themeSwitchPressed : null]}
       >
-        <View style={[styles.themeSwitchTrack, isDark ? styles.themeSwitchTrackDark : styles.themeSwitchTrackLight]}>
-          <View style={[styles.themeSwitchThumb, isDark ? styles.themeSwitchThumbDark : styles.themeSwitchThumbLight]}>
-            <Ionicons
-              name={isDark ? 'moon' : 'sunny'}
-              size={18}
-              color="#FFFFFF"
-            />
-          </View>
-          <View style={styles.themeSwitchStars}>
-            <View style={[styles.themeSwitchStar, styles.themeSwitchStarOne]} />
-            <View style={[styles.themeSwitchStar, styles.themeSwitchStarTwo]} />
-            <View style={[styles.themeSwitchStar, styles.themeSwitchStarThree]} />
-          </View>
-        </View>
+        <Animated.View style={[styles.themeIconToggle, { backgroundColor: themeIconBackground }]}>
+          <Animated.View
+            style={[
+              styles.themeIconLayer,
+              {
+                transform: [{ rotate: themeMoonRotate }, { scale: themeMoonScale }],
+              },
+            ]}
+          >
+            <Ionicons name="moon" size={25} color="#1F2937" />
+          </Animated.View>
+          <Animated.View
+            style={[
+              styles.themeIconLayer,
+              {
+                transform: [{ rotate: themeSunRotate }, { scale: themeSunScale }],
+              },
+            ]}
+          >
+            <Ionicons name="sunny" size={26} color="#FACC15" />
+          </Animated.View>
+        </Animated.View>
       </Pressable>
       <ScrollView
         keyboardDismissMode="on-drag"
@@ -285,12 +337,13 @@ export default function AuthScreen({ initialMessage = '', initialTone = 'info' }
             style={[
               styles.formPanel,
               useMobileLoginCard ? styles.mobileFormPanel : styles.desktopFormPanel,
+              useMobileLoginCard && !useFocusOverlay ? styles.tabletInlineFormPanel : null,
               mode === 'sign-up' ? styles.signUpFormPanel : null,
-              overlayField ? styles.mobileFormPanelHidden : null,
+              useFocusOverlay && overlayField ? styles.mobileFormPanelHidden : null,
             ]}
           >
             {mode === 'sign-up' ? (
-              useMobileLoginCard ? (
+              useFocusOverlay ? (
                 renderMobileInput('fullName', 'Full name', fullName, 'Enter your full name')
               ) : (
                 <FormField
@@ -301,7 +354,7 @@ export default function AuthScreen({ initialMessage = '', initialTone = 'info' }
                 />
               )
             ) : null}
-            {useMobileLoginCard ? (
+            {useFocusOverlay ? (
               renderMobileInput('email', 'Email', email, 'Enter your work email')
             ) : (
               <FormField
@@ -313,7 +366,7 @@ export default function AuthScreen({ initialMessage = '', initialTone = 'info' }
                 icon={<Ionicons name="mail-outline" size={18} color={palette.ink500} />}
               />
             )}
-            {useMobileLoginCard ? (
+            {useFocusOverlay ? (
               renderMobileInput('password', 'Password', password, 'Minimum 6 characters', {
                 trailingIcon: (
                   <Pressable
@@ -359,19 +412,21 @@ export default function AuthScreen({ initialMessage = '', initialTone = 'info' }
               </Pressable>
             ) : null}
 
-            <PrimaryButton
-              label={mode === 'sign-in' ? 'Sign in' : 'Create account'}
-              onPress={handleSubmit}
-              loading={loading}
-              disabled={!email.trim() || !password.trim() || (mode === 'sign-up' && !fullName.trim())}
-              icon={
-                <Ionicons
-                  name={mode === 'sign-in' && useMobileLoginCard ? 'shield-checkmark-outline' : mode === 'sign-in' ? 'arrow-forward-circle-outline' : 'checkmark-circle-outline'}
-                  size={18}
-                  color={palette.onAccent}
-                />
-              }
-            />
+            <View style={mode === 'sign-up' ? styles.signUpSubmitWrap : null}>
+              <PrimaryButton
+                label={mode === 'sign-in' ? 'Sign in' : 'Create account'}
+                onPress={handleSubmit}
+                loading={loading}
+                disabled={!email.trim() || !password.trim() || (mode === 'sign-up' && !fullName.trim())}
+                icon={
+                  <Ionicons
+                    name={mode === 'sign-in' && useMobileLoginCard ? 'shield-checkmark-outline' : mode === 'sign-in' ? 'arrow-forward-circle-outline' : 'checkmark-circle-outline'}
+                    size={18}
+                    color={palette.onAccent}
+                  />
+                }
+              />
+            </View>
 
             <Pressable
               onPress={() => {
@@ -398,7 +453,6 @@ export default function AuthScreen({ initialMessage = '', initialTone = 'info' }
 
 function createStyles(palette, isDark, responsiveMetrics, screenHeight) {
   const mobileHeroHeight = Math.round(Math.min(Math.max(screenHeight * 0.42, 300), 390));
-  const themeSwitchThumbOffset = Math.round(36 * responsiveMetrics.scale);
 
   return StyleSheet.create(scaleStyleDefinitions({
     authRoot: {
@@ -408,92 +462,48 @@ function createStyles(palette, isDark, responsiveMetrics, screenHeight) {
     },
     themeSwitchWrap: {
       position: 'absolute',
-      top: 18,
-      right: 18,
+      top: 16,
+      right: 16,
       zIndex: 3000,
       elevation: 3000,
     },
     themeSwitchPressed: {
       transform: [{ scale: 0.97 }],
     },
-    themeSwitchTrack: {
-      width: 74,
-      height: 38,
-      borderRadius: 19,
-      borderWidth: 2,
-      padding: 4,
-      justifyContent: 'center',
-      overflow: 'hidden',
-      shadowColor: '#000000',
-      shadowOffset: { width: 0, height: 6 },
-      shadowOpacity: isDark ? 0.32 : 0.16,
-      shadowRadius: 12,
-      elevation: 8,
-    },
-    themeSwitchTrackLight: {
-      backgroundColor: '#FCE9A3',
-      borderColor: 'rgba(255,255,255,0.72)',
-    },
-    themeSwitchTrackDark: {
-      backgroundColor: '#073B5A',
-      borderColor: 'rgba(148,220,255,0.38)',
-    },
-    themeSwitchThumb: {
-      width: 28,
-      height: 28,
-      borderRadius: 14,
+    themeIconToggle: {
+      width: 46,
+      height: 46,
+      borderRadius: 23,
       alignItems: 'center',
       justifyContent: 'center',
-      zIndex: 2,
+      position: 'relative',
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(250, 204, 21, 0.32)' : 'rgba(255, 255, 255, 0.78)',
+      shadowColor: '#000000',
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: isDark ? 0.26 : 0.12,
+      shadowRadius: 18,
+      elevation: 8,
     },
-    themeSwitchThumbLight: {
-      backgroundColor: '#F7B928',
-      transform: [{ translateX: 0 }],
-    },
-    themeSwitchThumbDark: {
-      backgroundColor: '#26A9E0',
-      transform: [{ translateX: themeSwitchThumbOffset }],
-    },
-    themeSwitchStars: {
-      bottom: 8,
-      left: 11,
-      opacity: isDark ? 1 : 0,
+    themeIconLayer: {
       position: 'absolute',
-      right: 10,
-      top: 8,
-    },
-    themeSwitchStar: {
-      position: 'absolute',
-      width: 3,
-      height: 3,
-      borderRadius: 2,
-      backgroundColor: '#FFFFFF',
-    },
-    themeSwitchStarOne: {
-      right: 13,
-      top: 2,
-    },
-    themeSwitchStarTwo: {
-      right: 22,
-      top: 13,
-    },
-    themeSwitchStarThree: {
-      right: 7,
-      bottom: 3,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     authScroller: {
       flex: 1,
-      backgroundColor: palette.canvas,
+      backgroundColor: isDark ? '#0D1A28' : palette.canvas,
     },
     authScrollContent: {
       flexGrow: 1,
+      paddingBottom: 0,
     },
     authContent: {
       flexGrow: 1,
       width: '100%',
       alignSelf: 'center',
-      maxWidth: responsiveMetrics.isTablet ? 430 : undefined,
-      backgroundColor: palette.card,
+      maxWidth: responsiveMetrics.width >= 900 ? 520 : undefined,
+      backgroundColor: isDark ? '#172B3A' : palette.card,
     },
     desktopBrandBlock: {
       alignItems: 'center',
@@ -527,11 +537,11 @@ function createStyles(palette, isDark, responsiveMetrics, screenHeight) {
     },
     formPanel: {
       width: '100%',
+      alignSelf: 'center',
     },
     mobileHero: {
       alignItems: 'center',
       backgroundColor: palette.navy900,
-      borderBottomRightRadius: 38,
       height: mobileHeroHeight,
       justifyContent: 'center',
       overflow: 'hidden',
@@ -540,13 +550,13 @@ function createStyles(palette, isDark, responsiveMetrics, screenHeight) {
     mobileHeroImage: {
       height: '100%',
       left: 0,
-      opacity: isDark ? 0.18 : 0.24,
+      opacity: isDark ? 0.34 : 0.24,
       position: 'absolute',
       top: 0,
       width: '100%',
     },
     mobileHeroOverlay: {
-      backgroundColor: isDark ? 'rgba(7, 19, 31, 0.84)' : 'rgba(17, 35, 59, 0.78)',
+      backgroundColor: isDark ? 'rgba(7, 19, 31, 0.68)' : 'rgba(17, 35, 59, 0.78)',
       bottom: 0,
       left: 0,
       position: 'absolute',
@@ -559,16 +569,11 @@ function createStyles(palette, isDark, responsiveMetrics, screenHeight) {
       paddingHorizontal: 24,
     },
     mobileBrandMark: {
-      width: 88,
-      height: 88,
+      width: 132,
+      height: 132,
       alignItems: 'center',
       justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: isDark ? '#365A76' : 'rgba(255,255,255,0.5)',
-      backgroundColor: isDark ? 'rgba(6,16,25,0.72)' : 'rgba(255,255,255,0.92)',
-      borderRadius: 20,
-      marginBottom: 16,
-      padding: 12,
+      marginBottom: 12,
     },
     mobileBrandImage: {
       width: '100%',
@@ -590,15 +595,22 @@ function createStyles(palette, isDark, responsiveMetrics, screenHeight) {
       textAlign: 'center',
     },
     mobileFormPanel: {
-      paddingBottom: 24,
-      paddingHorizontal: 22,
-      paddingTop: 42,
+      maxWidth: responsiveMetrics.isTablet ? 760 : undefined,
+      paddingBottom: responsiveMetrics.isTablet ? 22 : 12,
+      paddingHorizontal: responsiveMetrics.isTablet ? 34 : 22,
+      paddingTop: responsiveMetrics.isTablet ? 34 : 42,
+    },
+    tabletInlineFormPanel: {
+      gap: 16,
     },
     signUpFormPanel: {
-      paddingTop: 24,
+      paddingTop: responsiveMetrics.isTablet ? 28 : 24,
+    },
+    signUpSubmitWrap: {
+      marginTop: responsiveMetrics.isTablet ? 2 : 14,
     },
     desktopFormPanel: {
-      paddingBottom: 32,
+      paddingBottom: 16,
       paddingHorizontal: 30,
       paddingTop: 28,
       gap: 14,
@@ -674,10 +686,10 @@ function createStyles(palette, isDark, responsiveMetrics, screenHeight) {
       alignItems: 'center',
       justifyContent: 'center',
       gap: 6,
-      marginTop: 18,
+      marginTop: 12,
     },
     toggleText: {
-      color: palette.navy700,
+      color: isDark ? palette.cyan300 : palette.navy700,
       fontSize: 14,
       fontWeight: '700',
       textAlign: 'center',
@@ -692,7 +704,7 @@ function createStyles(palette, isDark, responsiveMetrics, screenHeight) {
       elevation: 5000,
     },
     focusOverlayBackdrop: {
-      backgroundColor: isDark ? 'rgba(3, 10, 17, 0.78)' : 'rgba(15, 23, 42, 0.68)',
+      backgroundColor: isDark ? 'rgba(23, 43, 58, 0.72)' : 'rgba(15, 23, 42, 0.68)',
       bottom: 0,
       left: 0,
       position: 'absolute',
@@ -722,15 +734,15 @@ function createStyles(palette, isDark, responsiveMetrics, screenHeight) {
     },
     focusInputShell: {
       alignItems: 'center',
-      backgroundColor: palette.card,
-      borderColor: palette.card,
+      backgroundColor: isDark ? '#1E3547' : palette.card,
+      borderColor: isDark ? '#426277' : palette.card,
       borderRadius: 14,
       borderWidth: 1,
       flexDirection: 'row',
       paddingHorizontal: 16,
       shadowColor: '#000000',
       shadowOffset: { width: 0, height: 10 },
-      shadowOpacity: isDark ? 0.36 : 0.24,
+      shadowOpacity: isDark ? 0.28 : 0.24,
       shadowRadius: 18,
       elevation: 8,
     },
