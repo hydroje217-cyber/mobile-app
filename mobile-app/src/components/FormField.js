@@ -246,10 +246,11 @@ function createStyles(palette, isDark, metrics) {
       paddingRight: 0,
     },
     trailingIconButton: {
-      width: 42,
+      minWidth: 42,
       minHeight: 48,
       alignItems: 'center',
       justifyContent: 'center',
+      paddingHorizontal: 10,
     },
     trailingIconButtonPressed: {
       opacity: 0.65,

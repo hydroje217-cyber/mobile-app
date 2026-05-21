@@ -9,7 +9,7 @@ import ScreenShell from '../components/ScreenShell';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { supabase } from '../lib/supabase';
-import { approveOperatorProfile, approvePasswordResetRequest, assignProfileRole, getOfficeDashboardSnapshot } from '../services/office';
+import { approveOperatorProfile, assignProfileRole, getOfficeDashboardSnapshot } from '../services/office';
 import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 import { loadNotificationReadKeys, saveNotificationReadKeys, saveNotificationUnreadCount } from '../utils/notificationState';
 import { formatTimestamp } from '../utils/time';
@@ -171,7 +171,7 @@ function getAccountPresence(profile, now = Date.now()) {
   const ageMs = Math.max(0, now - parsed.getTime());
 
   if (ageMs <= 2 * 60 * 1000) {
-    return { label: 'Active now', tone: 'success', detail: 'Online recently' };
+    return { label: 'Active now', tone: 'success', detail: formatRelativeTime(profile.last_seen_at, now) };
   }
 
   if (ageMs <= 30 * 60 * 1000) {
@@ -489,15 +489,6 @@ function buildOperationAlerts(dashboard, nowDate = new Date()) {
     });
   }
 
-  if (dashboard?.passwordResetRequests?.length) {
-    alerts.push({
-      key: 'pending-password-resets',
-      severity: 'info',
-      title: 'Password reset approvals waiting',
-      detail: `${dashboard.passwordResetRequests.length} password reset request(s) need admin or general manager approval.`,
-    });
-  }
-
   return alerts;
 }
 
@@ -631,10 +622,13 @@ function PresenceBadge({ presence }) {
     neutral: styles.presenceBadgeNeutral,
   }[presence?.tone] || styles.presenceBadgeNeutral;
 
+  const label = presence?.label || 'Never seen';
+  const detail = presence?.detail && presence.detail !== 'No activity recorded' ? presence.detail : '';
+
   return (
     <View style={[styles.presenceBadge, appearance]}>
       <View style={[styles.presenceDot, presence?.tone === 'success' && styles.presenceDotActive]} />
-      <Text style={styles.presenceBadgeText}>{presence?.label || 'Never seen'}</Text>
+      <Text style={styles.presenceBadgeText}>{detail ? `${label} · ${detail}` : label}</Text>
     </View>
   );
 }
@@ -1012,12 +1006,10 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
       totalOperators: 0,
       approvedOperators: 0,
       pendingOperators: 0,
-      pendingPasswordResets: 0,
       totalSites: 0,
       todayReadings: 0,
     },
     pendingApprovals: [],
-    passwordResetRequests: [],
     recentReadings: [],
     sites: [],
     todaySlotReadings: [],
@@ -1040,7 +1032,6 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
   });
   const [loading, setLoading] = useState(true);
   const [approvingId, setApprovingId] = useState('');
-  const [passwordResetApprovingId, setPasswordResetApprovingId] = useState('');
   const [roleUpdatingId, setRoleUpdatingId] = useState('');
   const [openRoleMenuId, setOpenRoleMenuId] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
@@ -1170,29 +1161,6 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
       setMessage(error.message || 'Approval failed.');
     } finally {
       setApprovingId('');
-    }
-  }
-
-  async function handleApprovePasswordReset(request) {
-    setPasswordResetApprovingId(request.id);
-    setTone('info');
-    setMessage(`Sending password reset email to ${request.email}...`);
-
-    try {
-      await approvePasswordResetRequest({
-        requestId: request.id,
-        email: request.email,
-      });
-
-      await loadDashboard({
-        silent: true,
-        successMessage: `Password reset email sent to ${request.email}.`,
-      });
-    } catch (error) {
-      setTone('error');
-      setMessage(error.message || 'Password reset approval failed.');
-    } finally {
-      setPasswordResetApprovingId('');
     }
   }
 
@@ -1500,7 +1468,6 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
             <StatTile label="Operators" value={dashboard.stats.totalOperators} iconName="people-outline" accent="navy" iconColor={palette.ink900} />
             <StatTile label="Approved" value={dashboard.stats.approvedOperators} iconName="checkmark-done-outline" accent="teal" iconColor={palette.ink900} />
             <StatTile label="Pending" value={dashboard.stats.pendingOperators} iconName="time-outline" accent="amber" iconColor={palette.ink900} />
-            <StatTile label="Reset requests" value={dashboard.stats.pendingPasswordResets || 0} iconName="key-outline" accent="rose" iconColor={palette.ink900} />
             <StatTile label="Sites" value={dashboard.stats.totalSites} iconName="business-outline" accent="navy" iconColor={palette.ink900} />
             <StatTile label="Readings today" value={dashboard.stats.todayReadings} iconName="analytics-outline" accent="rose" iconColor={palette.ink900} />
           </View>
@@ -1514,16 +1481,6 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
             actionLabel="Open"
             onPress={() => setActiveSection('approvals')}
             iconName="notifications-outline"
-            iconColor={palette.ink900}
-            actionIconColor={isDark ? palette.ink900 : palette.navy700}
-          />
-          <SummaryCard
-            title="Password resets"
-            value={dashboard.passwordResetRequests.length}
-            body="Approve reset requests and send recovery emails."
-            actionLabel="Open"
-            onPress={() => setActiveSection('approvals')}
-            iconName="key-outline"
             iconColor={palette.ink900}
             actionIconColor={isDark ? palette.ink900 : palette.navy700}
           />
@@ -1617,52 +1574,6 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
           <MessageBanner tone="success">No pending registrations are waiting for office approval.</MessageBanner>
         )}
 
-        <View style={styles.sectionDivider} />
-
-        <SectionHeader
-          title="Password reset approvals"
-          body="Approve verified reset requests. Approval sends the recovery email to the requested address."
-          iconName="key-outline"
-          iconColor={palette.rose500}
-        />
-
-        {dashboard.passwordResetRequests.length ? (
-          <View style={styles.list}>
-            {dashboard.passwordResetRequests.map((item) => (
-              <EntityCard key={item.id}>
-                <View style={styles.entityHeader}>
-                  <View style={styles.rowCopy}>
-                    <Text style={styles.rowTitle}>{item.email || 'Unknown email'}</Text>
-                    <Text style={styles.rowMeta}>Requested {formatMaybeTimestamp(item.requested_at || item.created_at)}</Text>
-                  </View>
-                  <View style={styles.roleBadge}>
-                    <Text style={styles.roleBadgeText}>RESET</Text>
-                  </View>
-                </View>
-
-                <View style={styles.metaStrip}>
-                  <View style={styles.metaPill}>
-                    <Text style={styles.metaPillLabel}>Status</Text>
-                    <Text style={styles.metaPillValue}>{item.status || 'pending'}</Text>
-                  </View>
-                  <View style={styles.metaPill}>
-                    <Text style={styles.metaPillLabel}>Reset email</Text>
-                    <Text style={styles.metaPillValue}>{item.reset_sent_at ? 'Sent' : 'Not sent'}</Text>
-                  </View>
-                </View>
-
-                <PrimaryButton
-                  label={passwordResetApprovingId === item.id ? 'Sending reset email...' : 'Approve and send reset email'}
-                  onPress={() => handleApprovePasswordReset(item)}
-                  loading={passwordResetApprovingId === item.id}
-                  icon={<Ionicons name="mail-outline" size={16} color={palette.onAccent} />}
-                />
-              </EntityCard>
-            ))}
-          </View>
-        ) : (
-          <MessageBanner tone="success">No password reset requests are waiting for approval.</MessageBanner>
-        )}
       </Card>
     );
   }
@@ -2616,11 +2527,6 @@ function createStyles(palette, isDark, responsiveMetrics) {
   panelCard: {
     gap: 8,
     padding: 11,
-  },
-  sectionDivider: {
-    height: 1,
-    backgroundColor: palette.line,
-    marginVertical: 8,
   },
   dashboardSkeletonCard: {
     overflow: 'hidden',
