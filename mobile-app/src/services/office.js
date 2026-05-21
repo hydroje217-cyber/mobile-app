@@ -1,5 +1,4 @@
 import { supabase } from '../lib/supabase';
-import * as ExpoLinking from 'expo-linking';
 import {
   buildDailyProduction,
   buildMonthlyChemicalUsage,
@@ -14,7 +13,6 @@ const DAILY_SUMMARY_SELECT =
 const PROFILE_SELECT = 'id, email, full_name, role, is_active, is_approved, approved_at, created_at, last_seen_at';
 const LOGIN_LOG_SELECT = 'id, user_id, email, role, browser, device, user_agent, created_at, profile:profiles(full_name, email)';
 const BASIC_LOGIN_LOG_SELECT = 'id, user_id, email, role, browser, device, user_agent, created_at';
-const PASSWORD_RESET_REQUEST_SELECT = 'id, email, status, requested_at, reviewed_at, reviewed_by, reset_sent_at, created_at';
 
 function requireSupabase() {
   if (!supabase) {
@@ -35,19 +33,6 @@ function isMissingColumnError(error) {
     /column .* does not exist/i.test(error?.message || '') ||
     /could not find .* column/i.test(error?.message || '')
   );
-}
-
-function isMissingRelationError(error) {
-  return (
-    error?.code === '42P01' ||
-    error?.code === 'PGRST205' ||
-    /relation .* does not exist/i.test(error?.message || '') ||
-    /could not find .* table/i.test(error?.message || '')
-  );
-}
-
-function getPasswordResetRedirectUrl() {
-  return ExpoLinking.createURL('reset-password');
 }
 
 async function fetchLoginLogs({ includeLoginLogs }) {
@@ -100,21 +85,6 @@ async function fetchLoginLogs({ includeLoginLogs }) {
   return isMissingColumnError(legacyResult.error)
     ? { data: [], error: null }
     : legacyResult;
-}
-
-async function fetchPasswordResetRequests({ includeRequests }) {
-  if (!includeRequests) {
-    return { data: [], error: null };
-  }
-
-  const result = await supabase
-    .from('password_reset_requests')
-    .select(PASSWORD_RESET_REQUEST_SELECT)
-    .eq('status', 'pending')
-    .order('requested_at', { ascending: true })
-    .limit(30);
-
-  return isMissingRelationError(result.error) ? { data: [], error: null } : result;
 }
 
 function startOfTodayIso() {
@@ -379,7 +349,6 @@ export async function getOfficeDashboardSnapshot({ limit = 12, includeLoginLogs 
     todayDeepwellSlotsResult,
     profilesResult,
     loginLogsResult,
-    passwordResetRequestsResult,
     monthlyChlorinationReadingsResult,
     monthlyDeepwellReadingsResult,
     dailySummariesResult,
@@ -450,7 +419,6 @@ export async function getOfficeDashboardSnapshot({ limit = 12, includeLoginLogs 
       .order('created_at', { ascending: false })
       .limit(20),
     fetchLoginLogs({ includeLoginLogs }),
-    fetchPasswordResetRequests({ includeRequests: true }),
     supabase
       .from('chlorination_readings')
       .select('id, site_id, status, created_at, reading_datetime, slot_datetime, totalizer, chlorine_consumed, peroxide_consumption, chlorination_power_kwh')
@@ -482,7 +450,6 @@ export async function getOfficeDashboardSnapshot({ limit = 12, includeLoginLogs 
   if (includeLoginLogs) {
     throwIfError(loginLogsResult, 'Failed to load login logs.');
   }
-  throwIfError(passwordResetRequestsResult, 'Failed to load password reset requests.');
   throwIfError(monthlyChlorinationReadingsResult, 'Failed to load monthly chlorination production.');
   throwIfError(monthlyDeepwellReadingsResult, 'Failed to load monthly deepwell power consumption.');
   throwIfError(dailySummariesResult, 'Failed to load historical daily summaries.');
@@ -504,12 +471,10 @@ export async function getOfficeDashboardSnapshot({ limit = 12, includeLoginLogs 
       totalOperators: totalOperatorsResult.count ?? 0,
       approvedOperators: approvedOperatorsResult.count ?? 0,
       pendingOperators: pendingApprovalsResult.data?.length ?? 0,
-      pendingPasswordResets: passwordResetRequestsResult.data?.length ?? 0,
       totalSites: sitesResult.data?.length ?? 0,
       todayReadings: (todayChlorinationReadingsResult.count ?? 0) + (todayDeepwellReadingsResult.count ?? 0),
     },
     pendingApprovals: pendingApprovalsResult.data ?? [],
-    passwordResetRequests: passwordResetRequestsResult.data ?? [],
     recentReadings,
     sites: sitesResult.data ?? [],
     todaySlotReadings,
@@ -542,43 +507,6 @@ export async function approveOperatorProfile({ profileId }) {
 
   if (error) {
     throw new Error(error.message || 'Failed to approve operator.');
-  }
-
-  return data;
-}
-
-export async function approvePasswordResetRequest({ requestId, email }) {
-  requireSupabase();
-
-  const normalizedEmail = email?.trim()?.toLowerCase();
-
-  if (!requestId || !normalizedEmail) {
-    throw new Error('Password reset request is missing an email address.');
-  }
-
-  const { error: resetError } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
-    redirectTo: getPasswordResetRedirectUrl(),
-  });
-
-  if (resetError) {
-    throw new Error(resetError.message || 'Failed to send password reset email.');
-  }
-
-  const { data: userResult } = await supabase.auth.getUser();
-  const { data, error } = await supabase
-    .from('password_reset_requests')
-    .update({
-      status: 'approved',
-      reviewed_at: new Date().toISOString(),
-      reviewed_by: userResult?.user?.id || null,
-      reset_sent_at: new Date().toISOString(),
-    })
-    .eq('id', requestId)
-    .select(PASSWORD_RESET_REQUEST_SELECT)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(error.message || 'Reset email sent, but the request could not be marked approved.');
   }
 
   return data;

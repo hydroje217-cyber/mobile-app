@@ -129,7 +129,7 @@ export default function AuthScreen({ initialMessage = '', initialTone = 'info' }
   async function handleForgotPassword() {
     if (!email.trim()) {
       setTone('error');
-      setMessage('Enter your email first so we know which account needs reset approval.');
+      setMessage('Enter your email first so we know where to send the password reset link.');
       return;
     }
 
@@ -137,7 +137,7 @@ export default function AuthScreen({ initialMessage = '', initialTone = 'info' }
     const action = await requestPasswordReset({ email: email.trim() });
     setLoading(false);
     setTone(action.ok ? 'success' : 'error');
-    setMessage(action.message || (action.ok ? 'Password reset request sent.' : 'Unable to request password reset approval.'));
+    setMessage(action.message || (action.ok ? 'Password reset email sent.' : 'Unable to send reset email.'));
   }
 
   function openOverlayField(fieldName) {

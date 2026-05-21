@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import * as ExpoLinking from 'expo-linking';
 import * as SecureStore from 'expo-secure-store';
 import { AppState, Platform } from 'react-native';
 import { supabase, supabaseReady } from '../lib/supabase';
@@ -173,15 +174,8 @@ function isInvalidRefreshTokenError(error) {
   ) || /invalid refresh token|refresh token.*not found|already used/i.test(message);
 }
 
-function isMissingPasswordResetTableError(error) {
-  const message = error?.message || '';
-
-  return (
-    error?.code === '42P01' ||
-    error?.code === 'PGRST205' ||
-    /password_reset_requests/i.test(message) ||
-    /schema cache/i.test(message)
-  );
+function getPasswordResetRedirectUrl() {
+  return ExpoLinking.createURL('reset-password');
 }
 
 async function clearStoredAuthSession() {
@@ -555,30 +549,20 @@ export function AuthProvider({ children }) {
           return { ok: false, message: 'Enter your email before requesting a password reset.' };
         }
 
-        const { error } = await supabase
-          .from('password_reset_requests')
-          .insert({
-            email: normalizedEmail,
-            status: 'pending',
-          });
+        const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+          redirectTo: getPasswordResetRedirectUrl(),
+        });
 
         if (error) {
-          if (isMissingPasswordResetTableError(error)) {
-            return {
-              ok: false,
-              message: 'Password reset approval is not set up yet. Ask an admin to run the Supabase password-reset-approval SQL migration.',
-            };
-          }
-
           return {
             ok: false,
-            message: error.message || 'Unable to request password reset approval.',
+            message: error.message || 'Unable to send password reset email.',
           };
         }
 
         return {
           ok: true,
-          message: 'Password reset request sent. An admin or general manager must approve it before the reset email is sent.',
+          message: 'Password reset email sent. Open the link to choose a new password.',
         };
       },
       recoverSessionFromUrl,

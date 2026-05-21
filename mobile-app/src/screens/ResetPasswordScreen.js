@@ -89,7 +89,12 @@ export default function ResetPasswordScreen({ navigation, initialMessage = '', i
           secureTextEntry={!showPassword}
           autoCapitalize="none"
           icon={<Ionicons name="lock-closed-outline" size={18} color={palette.ink500} />}
-          trailingIcon={<Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={18} color={palette.ink500} />}
+          trailingIcon={
+            <View style={styles.visibilityToggle}>
+              <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={18} color={palette.teal600} />
+              <Text style={styles.visibilityToggleText}>{showPassword ? 'Hide' : 'Show'}</Text>
+            </View>
+          }
           onPressTrailingIcon={() => setShowPassword((current) => !current)}
           trailingAccessibilityLabel={showPassword ? 'Hide new password' : 'Show new password'}
         />
@@ -101,7 +106,12 @@ export default function ResetPasswordScreen({ navigation, initialMessage = '', i
           secureTextEntry={!showConfirmPassword}
           autoCapitalize="none"
           icon={<Ionicons name="checkmark-circle-outline" size={18} color={palette.ink500} />}
-          trailingIcon={<Ionicons name={showConfirmPassword ? 'eye-off-outline' : 'eye-outline'} size={18} color={palette.ink500} />}
+          trailingIcon={
+            <View style={styles.visibilityToggle}>
+              <Ionicons name={showConfirmPassword ? 'eye-off-outline' : 'eye-outline'} size={18} color={palette.teal600} />
+              <Text style={styles.visibilityToggleText}>{showConfirmPassword ? 'Hide' : 'Show'}</Text>
+            </View>
+          }
           onPressTrailingIcon={() => setShowConfirmPassword((current) => !current)}
           trailingAccessibilityLabel={showConfirmPassword ? 'Hide confirmed password' : 'Show confirmed password'}
         />
@@ -148,6 +158,17 @@ function createStyles(palette, isDark, responsiveMetrics) {
     },
     formCard: {
       gap: 14,
+    },
+    visibilityToggle: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 4,
+    },
+    visibilityToggleText: {
+      color: palette.teal600,
+      fontSize: 11,
+      fontWeight: '900',
     },
   }, responsiveMetrics));
 }
