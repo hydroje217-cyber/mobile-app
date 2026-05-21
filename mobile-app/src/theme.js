@@ -27,8 +27,8 @@ export const lightPalette = {
 };
 
 export const darkPalette = {
-  navy900: '#07131F',
-  navy700: '#12304B',
+  navy900: '#10243A',
+  navy700: '#1B4566',
   teal600: '#1CC7B4',
   teal500: '#38D7C2',
   cyan300: '#67E8F9',
@@ -37,21 +37,21 @@ export const darkPalette = {
   ink900: '#F3F7FC',
   ink700: '#D2DCE7',
   ink500: '#98AABD',
-  line: '#243447',
-  lineStrong: '#3E5972',
-  card: '#0F1A26',
-  canvas: '#061019',
-  mist: '#0E1E2D',
-  successBg: '#0C2C24',
+  line: '#35506A',
+  lineStrong: '#58728B',
+  card: '#17283A',
+  canvas: '#101D2A',
+  mist: '#1C3347',
+  successBg: '#123C33',
   successText: '#82E6D6',
-  errorBg: '#35121C',
+  errorBg: '#451A27',
   errorText: '#FF9DB1',
-  warningBg: '#33240B',
+  warningBg: '#463414',
   warningText: '#F7CA72',
   onAccent: '#F8FCFF',
-  appSafeArea: '#030A11',
-  heroSubtitle: '#AFC0D5',
-  overlay: 'rgba(0, 0, 0, 0.28)',
+  appSafeArea: '#0A1724',
+  heroSubtitle: '#C1D1E3',
+  overlay: 'rgba(0, 0, 0, 0.2)',
 };
 
 export const themes = {

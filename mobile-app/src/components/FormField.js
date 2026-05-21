@@ -261,7 +261,7 @@ function createStyles(palette, isDark, metrics) {
       textAlignVertical: 'top',
     },
     disabled: {
-      backgroundColor: isDark ? '#111820' : '#E5EBF2',
+      backgroundColor: isDark ? '#213447' : '#E5EBF2',
       color: palette.ink500,
     },
     errorText: {

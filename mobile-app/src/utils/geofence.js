@@ -115,6 +115,48 @@ export async function requestCurrentLocation() {
   });
 }
 
+export async function reverseGeocodePlaceName(location) {
+  if (!location?.coords) {
+    return '';
+  }
+
+  try {
+    const [place] = await Location.reverseGeocodeAsync({
+      latitude: location.coords.latitude,
+      longitude: location.coords.longitude,
+    });
+
+    if (!place) {
+      return 'Unknown area';
+    }
+
+    return formatReverseGeocodePlace(place) || 'Unknown area';
+  } catch {
+    return 'Unknown area';
+  }
+}
+
+function formatReverseGeocodePlace(place) {
+  const barangay = normalizePlacePart(place.district || place.name);
+  const cityOrMunicipality = normalizePlacePart(place.city || place.subregion);
+  const country = normalizePlacePart(place.country);
+
+  if (barangay && cityOrMunicipality && barangay.toLowerCase() !== cityOrMunicipality.toLowerCase()) {
+    return `${barangay}, ${cityOrMunicipality}`;
+  }
+
+  return barangay || cityOrMunicipality || country || '';
+}
+
+function normalizePlacePart(value) {
+  if (!value) {
+    return '';
+  }
+
+  return String(value).trim();
+}
+
+
 export function buildGpsPayload(site, location, result = evaluateSiteGeofence(site, location)) {
   if (!location?.coords) {
     return {};
