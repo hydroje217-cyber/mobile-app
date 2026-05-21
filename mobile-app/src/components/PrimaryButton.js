@@ -49,11 +49,16 @@ export default function PrimaryButton({
 function createStyles(palette, isDark, metrics) {
   return StyleSheet.create(scaleStyleDefinitions({
     button: {
-      minHeight: 50,
-      borderRadius: 12,
+      minHeight: 56,
+      borderRadius: 16,
       alignItems: 'center',
       justifyContent: 'center',
-      paddingHorizontal: 18,
+      paddingHorizontal: 20,
+      shadowColor: '#0F172A',
+      shadowOpacity: isDark ? 0.16 : 0.08,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 7 },
+      elevation: 3,
     },
     content: {
       flexDirection: 'row',
@@ -71,9 +76,9 @@ function createStyles(palette, isDark, metrics) {
       backgroundColor: palette.teal600,
     },
     secondary: {
-      backgroundColor: isDark ? '#11312D' : '#E5F5F3',
+      backgroundColor: isDark ? '#102A38' : '#F4FAFF',
       borderWidth: 1,
-      borderColor: isDark ? '#1A655E' : '#B4E5DE',
+      borderColor: isDark ? '#2E5E6A' : '#C9DDED',
     },
     disabled: {
       opacity: 0.55,
@@ -85,7 +90,7 @@ function createStyles(palette, isDark, metrics) {
       flexShrink: 1,
       fontSize: 14,
       lineHeight: 18,
-      fontWeight: '800',
+      fontWeight: '900',
       letterSpacing: 0,
       textAlign: 'center',
     },
