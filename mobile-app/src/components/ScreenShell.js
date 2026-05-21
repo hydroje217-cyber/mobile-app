@@ -391,7 +391,7 @@ function createStyles(palette, isDark, metrics) {
       justifyContent: 'center',
       borderWidth: 1,
       borderColor: isDark ? '#294C68' : 'rgba(191,212,231,0.8)',
-      backgroundColor: isDark ? '#0C1824' : 'rgba(248,252,255,0.08)',
+      backgroundColor: isDark ? '#19324A' : 'rgba(248,252,255,0.08)',
       borderRadius: 8,
     },
     eyebrow: {
@@ -446,12 +446,12 @@ function createStyles(palette, isDark, metrics) {
       justifyContent: 'center',
       borderWidth: 1,
       borderColor: isDark ? '#294C68' : 'rgba(191,212,231,0.8)',
-      backgroundColor: isDark ? '#0C1824' : 'rgba(248,252,255,0.08)',
+      backgroundColor: isDark ? '#19324A' : 'rgba(248,252,255,0.08)',
       borderRadius: 10,
     },
     accountIconButtonOpen: {
       borderColor: palette.cyan300,
-      backgroundColor: isDark ? '#12384C' : 'rgba(103,232,249,0.12)',
+      backgroundColor: isDark ? '#1D4A63' : 'rgba(103,232,249,0.12)',
     },
     accountDropdown: {
       position: 'absolute',
@@ -460,7 +460,7 @@ function createStyles(palette, isDark, metrics) {
       width: metrics.isTablet ? 330 : 292,
       borderWidth: 1,
       borderColor: isDark ? '#2B5877' : 'rgba(191,212,231,0.92)',
-      backgroundColor: isDark ? '#0B1724' : '#F8FCFF',
+      backgroundColor: isDark ? palette.card : '#F8FCFF',
       padding: 12,
       borderRadius: 8,
       gap: 10,
@@ -483,7 +483,7 @@ function createStyles(palette, isDark, metrics) {
       justifyContent: 'center',
       borderWidth: 1,
       borderColor: isDark ? '#1E5B70' : '#B8DDF0',
-      backgroundColor: isDark ? '#102A3A' : '#EAF8FF',
+      backgroundColor: isDark ? '#1C4257' : '#EAF8FF',
       borderRadius: 8,
     },
     accountCopy: {

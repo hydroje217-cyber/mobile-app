@@ -191,7 +191,7 @@ function createStyles(palette, isDark, metrics) {
       borderRadius: 10,
       borderWidth: 1,
       borderColor: palette.lineStrong,
-      backgroundColor: isDark ? '#0C1621' : '#F9FCFF',
+      backgroundColor: isDark ? palette.mist : '#F9FCFF',
       shadowColor: '#0F172A',
       shadowOpacity: 0,
       shadowRadius: 0,
@@ -210,7 +210,7 @@ function createStyles(palette, isDark, metrics) {
       borderColor: isDark ? '#596879' : '#B8C5D3',
       borderStyle: 'dashed',
       borderWidth: 1.5,
-      backgroundColor: isDark ? '#111820' : '#E5EBF2',
+      backgroundColor: isDark ? '#213447' : '#E5EBF2',
     },
     inputWrapError: {
       borderColor: palette.errorText,
@@ -259,7 +259,7 @@ function createStyles(palette, isDark, metrics) {
       textAlignVertical: 'top',
     },
     disabled: {
-      backgroundColor: isDark ? '#111820' : '#E5EBF2',
+      backgroundColor: isDark ? '#213447' : '#E5EBF2',
       color: palette.ink500,
     },
     errorText: {

@@ -492,7 +492,7 @@ function createStyles(palette, isDark, responsiveMetrics, screenHeight) {
     },
     authScroller: {
       flex: 1,
-      backgroundColor: isDark ? '#0D1A28' : palette.canvas,
+      backgroundColor: palette.canvas,
     },
     authScrollContent: {
       flexGrow: 1,
@@ -503,7 +503,7 @@ function createStyles(palette, isDark, responsiveMetrics, screenHeight) {
       width: '100%',
       alignSelf: 'center',
       maxWidth: responsiveMetrics.width >= 900 ? 520 : undefined,
-      backgroundColor: isDark ? '#172B3A' : palette.card,
+      backgroundColor: palette.card,
     },
     desktopBrandBlock: {
       alignItems: 'center',
@@ -627,7 +627,7 @@ function createStyles(palette, isDark, responsiveMetrics, screenHeight) {
       textTransform: 'uppercase',
     },
     mobileInputShell: {
-      backgroundColor: isDark ? '#0C1621' : '#F9FCFF',
+      backgroundColor: isDark ? palette.mist : '#F9FCFF',
       borderColor: palette.line,
       borderRadius: 14,
       borderWidth: 1,
@@ -734,7 +734,7 @@ function createStyles(palette, isDark, responsiveMetrics, screenHeight) {
     },
     focusInputShell: {
       alignItems: 'center',
-      backgroundColor: isDark ? '#1E3547' : palette.card,
+      backgroundColor: palette.card,
       borderColor: isDark ? '#426277' : palette.card,
       borderRadius: 14,
       borderWidth: 1,

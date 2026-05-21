@@ -17,6 +17,7 @@ import {
   formatDistanceMeters,
   getSiteCoordinates,
   requestCurrentLocation,
+  reverseGeocodePlaceName,
 } from '../utils/geofence';
 import { shiftNameForSlot } from '../utils/shiftSchedule';
 import { formatTimestamp, roundDownTo30MinSlot } from '../utils/time';
@@ -124,6 +125,7 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
   const [offlineMessage, setOfflineMessage] = useState('');
   const [offlineTone, setOfflineTone] = useState('info');
   const [operatorLocation, setOperatorLocation] = useState(null);
+  const [operatorPlaceName, setOperatorPlaceName] = useState('');
   const [locationChecking, setLocationChecking] = useState(false);
   const [geofenceMessage, setGeofenceMessage] = useState('');
   const [geofenceTone, setGeofenceTone] = useState('info');
@@ -172,6 +174,22 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
     inactive: 'No GPS fence',
   }[selectedZoneState];
   const activeTutorialTarget = liveTutorialVisible ? liveTutorialSteps[liveTutorialStep]?.target : null;
+  const compactGeofenceDistance = selectedSiteHasGeofence
+    ? formatDistanceMeters(selectedGeofence?.distanceM)
+    : '';
+  const compactGeofencePlace = operatorPlaceName || 'Location';
+  const compactGeofenceMessage =
+    geofenceTone === 'error'
+      ? selectedZoneState === 'accuracy'
+        ? `${compactGeofencePlace} · GPS accuracy ${formatDistanceMeters(selectedGeofence?.accuracyM)}`
+        : `${compactGeofencePlace} · ${compactGeofenceDistance} from site`
+      : geofenceTone === 'success'
+        ? `${compactGeofencePlace} · ${compactGeofenceDistance} from site`
+        : geofenceMessage
+          ? selectedSiteHasGeofence
+            ? `${compactGeofencePlace} · ${compactGeofenceDistance} from site`
+            : 'GPS notice available for this site.'
+          : '';
 
   function registerTutorialTarget(target) {
     return (event) => {
@@ -272,6 +290,28 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
   useEffect(() => {
     onSelectedSiteChange?.(selectedSite);
   }, [onSelectedSiteChange, selectedSite]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadOperatorPlaceName() {
+      if (!operatorLocation?.coords) {
+        setOperatorPlaceName('');
+        return;
+      }
+
+      const placeName = await reverseGeocodePlaceName(operatorLocation);
+      if (mounted) {
+        setOperatorPlaceName(placeName);
+      }
+    }
+
+    loadOperatorPlaceName();
+
+    return () => {
+      mounted = false;
+    };
+  }, [operatorLocation]);
 
   useEffect(() => {
     let mounted = true;
@@ -615,14 +655,6 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
         ) : null
       }
     >
-      {selectedSite && checkpointSummary.missing > 0 ? (
-        <MessageBanner tone="error">
-          {checkpointSummary.missing} earlier checkpoint{checkpointSummary.missing === 1 ? '' : 's'} appear missing today for {selectedSite.name}.
-        </MessageBanner>
-      ) : selectedSite ? (
-        <MessageBanner tone="success">No missed checkpoints detected today for {selectedSite.name}.</MessageBanner>
-      ) : null}
-
       {showStatusSkeleton ? (
         <StatusStripSkeleton styles={styles} />
       ) : selectedSite ? (
@@ -630,48 +662,68 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
           onLayout={registerTutorialTarget('status')}
           style={[styles.tutorialTarget, activeTutorialTarget === 'status' && styles.tutorialTargetActive]}
         >
-        <Card style={styles.statusStripCard}>
+        <View style={styles.statusStripCard}>
           <View style={styles.statusStripItem}>
-            <Text style={styles.statusStripLabel}>Shift</Text>
-            <Text style={styles.statusStripValue}>{shiftNameForSlot(currentSlot)}</Text>
+            <View style={styles.statusStripLabelRow}>
+              <Ionicons name="calendar-outline" size={responsiveMetrics.width < 420 ? 12 : 15} color={palette.teal500} />
+              <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statusStripLabel}>Shift</Text>
+            </View>
+            <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statusStripValue}>{shiftNameForSlot(currentSlot)}</Text>
           </View>
           <View style={styles.statusStripItem}>
-            <Text style={styles.statusStripLabel}>Today</Text>
-            <Text style={styles.statusStripValue}>
+            <View style={styles.statusStripLabelRow}>
+              <Ionicons name="clipboard-outline" size={responsiveMetrics.width < 420 ? 12 : 15} color={palette.teal500} />
+              <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statusStripLabel}>Today</Text>
+            </View>
+            <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statusStripValue}>
               {checkpointSummary.completed}/{checkpointSummary.expected}
             </Text>
           </View>
           <View style={styles.statusStripItem}>
-            <Text style={styles.statusStripLabel}>Sync</Text>
-            <Text style={styles.statusStripValue}>
+            <View style={styles.statusStripLabelRow}>
+              <Ionicons name="wifi-outline" size={responsiveMetrics.width < 420 ? 12 : 15} color={palette.teal500} />
+              <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statusStripLabel}>Sync</Text>
+            </View>
+            <View style={styles.statusStripValueRow}>
+              <View style={[styles.statusStripDot, connectionOnline ? styles.statusStripDotOnline : styles.statusStripDotOffline]} />
+              <Text
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              style={[
+                styles.statusStripValue,
+                styles.statusStripValueInline,
+                connectionOnline ? styles.statusStripValueOnline : styles.statusStripValueWarning,
+              ]}
+            >
               {connectionOnline ? 'Online' : 'Offline'}{offlineCount ? ` · ${offlineCount} pending` : ''}
+              </Text>
+            </View>
+          </View>
+          <View style={[styles.statusStripItem, checkpointSummary.missing > 0 ? styles.statusStripItemWarning : styles.statusStripItemSuccess]}>
+            <View style={styles.statusStripLabelRow}>
+              <Ionicons
+                name={checkpointSummary.missing > 0 ? 'warning-outline' : 'checkmark-circle-outline'}
+                size={responsiveMetrics.width < 420 ? 12 : 15}
+                color={checkpointSummary.missing > 0 ? palette.errorText : palette.teal500}
+              />
+              <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.statusStripLabel, checkpointSummary.missing > 0 ? styles.statusStripLabelWarning : null]}>Missing</Text>
+            </View>
+            <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.statusStripValue, checkpointSummary.missing > 0 ? styles.statusStripValueWarning : null]}>
+              {checkpointSummary.missing}
             </Text>
           </View>
-        </Card>
+        </View>
         </View>
       ) : null}
       
-      <Card style={styles.summaryCard}>
-        <View style={styles.summaryHeader}>
-          <View style={styles.summaryIcon}>
-            <Ionicons name="compass-outline" size={18} color={palette.ink900} />
-          </View>
-          <View style={styles.summaryCopy}>
-            <Text style={styles.sectionTitle}>Choose the site for this shift</Text>
-            <Text style={styles.sectionBody}>
-              Confirm where you are assigned today, then continue to submit a new reading or review recent history.
-            </Text>
-          </View>
-        </View>
-      </Card>
       {selectedSite ? (
-        <Card style={styles.selectionCard}>
+        <View style={styles.selectionCard}>
           <View style={styles.selectionHeader}>
             <View style={styles.selectionIcon}>
               <Ionicons
                 name={selectedSite.type === 'CHLORINATION' ? 'water-outline' : 'flash-outline'}
-                size={16}
-                color={palette.ink900}
+                size={17}
+                color={palette.teal600}
               />
             </View>
             <View style={styles.selectionCopy}>
@@ -680,8 +732,12 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
                 {selectedSite.type === 'CHLORINATION' ? 'Chlorination line' : 'Deepwell station'}
               </Text>
             </View>
+            <View style={styles.selectionStatusPill}>
+              <Ionicons name="checkmark-circle" size={12} color={palette.teal600} />
+              <Text style={styles.selectionStatusText}>Selected</Text>
+            </View>
           </View>
-        </Card>
+        </View>
       ) : null}
       
       {false && selectedSite ? (
@@ -725,44 +781,51 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
 
       {message ? <MessageBanner tone={sites.length ? 'info' : 'error'}>{message}</MessageBanner> : null}
       {offlineMessage ? <MessageBanner tone={offlineTone}>{offlineMessage}</MessageBanner> : null}
-      {geofenceMessage ? <MessageBanner tone={geofenceTone}>{geofenceMessage}</MessageBanner> : null}
 
       <View
         onLayout={registerTutorialTarget('gps')}
         style={[styles.tutorialTarget, activeTutorialTarget === 'gps' && styles.tutorialTargetActive]}
       >
-      <Card style={styles.geofenceCard}>
+      <View style={styles.geofenceCard}>
         <View style={styles.geofenceHeader}>
           <View style={styles.geofenceIcon}>
-            <Ionicons name="navigate-outline" size={18} color={palette.ink900} />
+            <Ionicons name="locate-outline" size={22} color={palette.teal500} />
           </View>
           <View style={styles.geofenceCopy}>
             <View style={styles.geofenceTitleRow}>
               <Text style={styles.geofenceTitle}>GPS authorization</Text>
               <View style={[styles.zoneBadge, styles[`zoneBadge_${selectedZoneState}`]]}>
-                <Ionicons name={selectedZoneIcon} size={13} color={palette.ink900} />
-                <Text style={styles.zoneBadgeText}>{selectedZoneLabel}</Text>
+                <Ionicons
+                  name={selectedZoneIcon}
+                  size={12}
+                  color={selectedZoneState === 'accuracy' ? (isDark ? '#FFF7D6' : '#7A4C05') : palette.ink900}
+                />
+                <Text style={[styles.zoneBadgeText, styles[`zoneBadgeText_${selectedZoneState}`]]}>{selectedZoneLabel}</Text>
               </View>
             </View>
             <Text style={styles.geofenceBody}>
               {locationChecking
                 ? 'Checking current location...'
-                : selectedSiteHasGeofence
-                  ? `${selectedSite?.name || 'Selected site'}: ${formatDistanceMeters(
-                      selectedGeofence?.distanceM
-                    )} away, radius ${formatDistanceMeters(selectedGeofence?.radiusM)}.`
-                  : 'Coordinates are not configured for this selected site yet.'}
+                : compactGeofenceMessage || (selectedSiteHasGeofence
+                  ? `${formatDistanceMeters(selectedGeofence?.distanceM)} from site`
+                  : 'Coordinates are not configured for this site.')}
             </Text>
           </View>
         </View>
-        <PrimaryButton
-          label={locationChecking ? 'Checking GPS...' : 'Retry GPS check'}
+        <View style={styles.geofenceDivider} />
+        <Pressable
           onPress={refreshOperatorLocation}
-          loading={locationChecking}
-          tone="secondary"
-          icon={<Ionicons name="locate-outline" size={16} color={palette.ink900} />}
-        />
-      </Card>
+          disabled={locationChecking}
+          style={({ pressed }) => [
+            styles.geofenceRetryButton,
+            pressed && !locationChecking ? styles.geofenceRetryButtonPressed : null,
+            locationChecking ? styles.geofenceRetryButtonDisabled : null,
+          ]}
+        >
+          <Ionicons name="locate-outline" size={15} color={palette.teal500} />
+          <Text style={styles.geofenceRetryText}>{locationChecking ? 'Checking GPS...' : 'Retry GPS check'}</Text>
+        </Pressable>
+      </View>
       </View>
 
       {offlineCount ? (
@@ -796,6 +859,10 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
           <SiteOptionsSkeleton styles={styles} />
         ) : (
           <View style={styles.options}>
+            <View style={styles.optionsHeaderRow}>
+              <Text style={styles.optionsHeaderText}>Available sites</Text>
+              <View style={styles.optionsHeaderLine} />
+            </View>
           {sites.map((site) => {
             const active = selectedSite?.id === site.id;
             const siteGeofence = geofenceBySiteId[String(site.id)];
@@ -805,7 +872,12 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
               <Pressable
                 key={site.id}
                 onPress={() => setSelectedSite(site)}
-                style={[styles.option, blocked && styles.optionBlocked, active && styles.optionActive]}
+                style={({ pressed }) => [
+                  styles.option,
+                  blocked && styles.optionBlocked,
+                  active && styles.optionActive,
+                  pressed && styles.optionPressed,
+                ]}
               >
                 <View style={[styles.optionAccent, active && styles.optionAccentActive]} />
                 <View style={styles.optionTopRow}>
@@ -813,19 +885,25 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
                     <Ionicons
                       name={site.type === 'CHLORINATION' ? 'water-outline' : 'flash-outline'}
                       size={17}
-                      color={active ? palette.onAccent : palette.ink900}
+                      color={active ? (isDark ? palette.onAccent : palette.teal600) : palette.ink900}
                     />
                   </View>
                   <View style={styles.optionCopy}>
-                    <Text style={[styles.optionTitle, active && styles.optionTitleActive]}>{site.name}</Text>
+                    <View style={styles.optionTitleRow}>
+                      <Text style={[styles.optionTitle, active && styles.optionTitleActive]}>{site.name}</Text>
+                      <View style={[styles.badge, active && styles.badgeActive, site.type === 'DEEPWELL' ? styles.badgeDeepwell : null]}>
+                        <Text style={[styles.badgeLabel, active && styles.badgeLabelActive, site.type === 'DEEPWELL' ? styles.badgeLabelDeepwell : null]}>{site.type}</Text>
+                      </View>
+                    </View>
                     <Text style={[styles.optionSubhead, active && styles.optionSubheadActive]}>
                       {getSiteDescription(site.type)}
                     </Text>
                   </View>
-                  <View style={[styles.badge, active && styles.badgeActive]}>
-                    <Text style={[styles.badgeLabel, active && styles.badgeLabelActive]}>{site.type}</Text>
+                  <View style={[styles.optionArrow, active && styles.optionArrowActive]}>
+                    <Ionicons name="chevron-forward" size={20} color={active ? (isDark ? palette.onAccent : palette.teal600) : palette.ink500} />
                   </View>
                 </View>
+                {active ? (
                 <View style={styles.optionMetaRow}>
                   <View style={[styles.optionMetaPill, active && styles.optionMetaPillActive]}>
                     <Ionicons
@@ -843,13 +921,14 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
                     <Ionicons
                       name={blocked ? 'lock-closed-outline' : active ? 'checkmark-circle' : 'ellipse-outline'}
                       size={12}
-                      color={active ? palette.onAccent : palette.ink700}
+                      color={active ? (isDark ? palette.onAccent : palette.teal600) : palette.ink700}
                     />
                     <Text style={[styles.optionMetaText, active && styles.optionMetaTextActive]}>
                       {blocked ? 'Outside zone' : active ? 'Selected now' : 'Tap to select'}
                     </Text>
                   </View>
                 </View>
+                ) : null}
               </Pressable>
             );
           })}
@@ -882,40 +961,24 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
 
 function createStyles(palette, isDark, responsiveMetrics) {
   return StyleSheet.create(scaleStyleDefinitions({
-    summaryCard: {
-      gap: 12,
-    },
-    summaryHeader: {
-      flexDirection: 'row',
-      alignItems: 'flex-start',
+    options: {
       gap: 10,
     },
-    summaryIcon: {
-      width: 36,
-      height: 36,
-      borderRadius: 999,
+    optionsHeaderRow: {
+      flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: isDark ? '#16304A' : '#EAF2FB',
-      borderWidth: 1,
-      borderColor: isDark ? '#31506E' : '#C9DDF3',
+      gap: 10,
+      marginBottom: 2,
     },
-    summaryCopy: {
-      flex: 1,
-    },
-    sectionTitle: {
-      color: palette.ink900,
-      fontSize: 18,
+    optionsHeaderText: {
+      color: palette.ink500,
+      fontSize: 12,
       fontWeight: '800',
     },
-    sectionBody: {
-      marginTop: 8,
-      color: palette.ink700,
-      fontSize: 14,
-      lineHeight: 20,
-    },
-    options: {
-      gap: 12,
+    optionsHeaderLine: {
+      flex: 1,
+      height: 1,
+      backgroundColor: isDark ? '#294C68' : '#D7E0EA',
     },
     actions: {
       gap: 12,
@@ -1057,29 +1120,41 @@ function createStyles(palette, isDark, responsiveMetrics) {
       transform: [{ scale: 0.98 }],
     },
     option: {
-      backgroundColor: palette.card,
-      borderRadius: 12,
+      backgroundColor: isDark ? '#14283B' : '#FFFFFF',
+      borderRadius: 14,
       borderWidth: 1,
-      borderColor: isDark ? palette.line : '#CFE0EE',
-      padding: 14,
+      borderColor: isDark ? '#274864' : '#D7E2EC',
+      paddingHorizontal: 14,
+      paddingVertical: 14,
       overflow: 'hidden',
+      shadowColor: '#0F172A',
+      shadowOpacity: isDark ? 0.08 : 0.06,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 5 },
+      elevation: 2,
     },
     optionActive: {
-      backgroundColor: isDark ? palette.navy700 : '#163A5B',
-      borderColor: isDark ? palette.cyan300 : '#67E8F9',
+      backgroundColor: isDark ? '#123553' : '#ECFBFA',
+      borderColor: isDark ? '#2CB4DB' : '#14B8A6',
+      shadowOpacity: isDark ? 0.24 : 0.14,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 7,
+    },
+    optionPressed: {
+      transform: [{ scale: 0.99 }],
     },
     optionBlocked: {
-      opacity: 0.72,
+      opacity: 0.92,
       borderColor: isDark ? '#70464A' : '#F0B8BE',
-      backgroundColor: isDark ? '#24161B' : '#FFF5F6',
     },
     optionAccent: {
       position: 'absolute',
       top: 0,
       left: 0,
-      right: 0,
-      height: 4,
-      backgroundColor: isDark ? '#31506E' : '#BFD9EC',
+      bottom: 0,
+      width: 5,
+      backgroundColor: isDark ? '#31506E' : '#D4E3EE',
     },
     optionAccentActive: {
       backgroundColor: isDark ? palette.cyan300 : palette.teal500,
@@ -1087,48 +1162,58 @@ function createStyles(palette, isDark, responsiveMetrics) {
     optionTopRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
-      alignItems: 'flex-start',
-      gap: 10,
+      alignItems: 'center',
+      gap: 12,
     },
     typeIcon: {
-      width: 34,
-      height: 34,
-      borderRadius: 12,
+      width: 44,
+      height: 44,
+      borderRadius: 999,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: isDark ? '#152636' : '#EAF2FB',
+      backgroundColor: isDark ? '#152636' : '#F1F7FC',
       borderWidth: 1,
-      borderColor: isDark ? palette.line : '#C9DDF3',
+      borderColor: isDark ? palette.line : '#D3E2EF',
     },
     typeIconActive: {
-      backgroundColor: 'rgba(255,255,255,0.1)',
-      borderColor: 'rgba(255,255,255,0.24)',
+      backgroundColor: isDark ? '#143B53' : '#D7F7F3',
+      borderColor: isDark ? '#2CB4DB' : '#7DDDD2',
     },
     optionCopy: {
       flex: 1,
       gap: 4,
+      minWidth: 0,
+    },
+    optionTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 7,
+      minWidth: 0,
     },
     optionTitle: {
       color: palette.ink900,
-      fontSize: 17,
-      fontWeight: '800',
+      fontSize: 15,
+      fontWeight: '900',
+      flexShrink: 1,
     },
     optionTitleActive: {
-      color: palette.onAccent,
+      color: palette.ink900,
     },
     optionSubhead: {
       color: palette.ink700,
-      fontSize: 12,
-      lineHeight: 17,
+      fontSize: 11,
+      lineHeight: 15,
     },
     optionSubheadActive: {
-      color: palette.heroSubtitle,
+      color: palette.ink700,
     },
     optionMetaRow: {
-      marginTop: 12,
+      marginTop: 10,
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 8,
+      alignItems: 'center',
     },
     optionMetaPill: {
       flexDirection: 'row',
@@ -1136,46 +1221,69 @@ function createStyles(palette, isDark, responsiveMetrics) {
       gap: 6,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: isDark ? palette.line : '#CFE0EE',
-      backgroundColor: isDark ? '#152636' : '#F3F8FC',
-      paddingHorizontal: 10,
-      paddingVertical: 6,
+      borderColor: isDark ? palette.line : '#D6E2EC',
+      backgroundColor: isDark ? '#152636' : '#F7FAFC',
+      paddingHorizontal: 9,
+      paddingVertical: 5,
     },
     optionMetaPillActive: {
-      borderColor: 'rgba(255,255,255,0.22)',
-      backgroundColor: 'rgba(255,255,255,0.1)',
+      borderColor: isDark ? '#426277' : '#9DDCD5',
+      backgroundColor: isDark ? '#1B3448' : '#FFFFFF',
     },
     optionMetaText: {
       color: palette.ink700,
-      fontSize: 11,
-      fontWeight: '700',
-    },
-    optionMetaTextActive: {
-      color: palette.onAccent,
-    },
-    badge: {
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderRadius: 999,
-      backgroundColor: isDark ? '#15312D' : '#E8F7F6',
-    },
-    badgeActive: {
-      backgroundColor: isDark ? '#17374D' : '#D9FBFF',
-    },
-    badgeLabel: {
-      color: palette.teal600,
-      fontSize: 11,
+      fontSize: 10,
       fontWeight: '800',
     },
+    optionMetaTextActive: {
+      color: palette.ink700,
+    },
+    optionArrow: {
+      width: 28,
+      height: 44,
+      borderRadius: 999,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    optionArrowActive: {
+      backgroundColor: 'transparent',
+    },
+    badge: {
+      paddingHorizontal: 9,
+      paddingVertical: 5,
+      borderRadius: 999,
+      backgroundColor: isDark ? '#153A54' : '#E5F4FF',
+    },
+    badgeActive: {
+      backgroundColor: isDark ? '#153A54' : '#DBF5F1',
+    },
+    badgeDeepwell: {
+      backgroundColor: isDark ? '#2B245D' : '#EEE9FF',
+    },
+    badgeLabel: {
+      color: isDark ? '#BFEFFF' : '#0E7490',
+      fontSize: 10,
+      fontWeight: '900',
+    },
     badgeLabelActive: {
-      color: isDark ? palette.ink900 : '#164E63',
+      color: isDark ? '#BFEFFF' : '#0F766E',
+    },
+    badgeLabelDeepwell: {
+      color: isDark ? '#C7B8FF' : '#5B4FC7',
     },
     selectionCard: {
       gap: 6,
-      backgroundColor: isDark ? '#112B24' : '#ECFCF8',
-      borderColor: isDark ? '#1A655E' : '#A7E8DD',
-      paddingVertical: 12,
+      backgroundColor: isDark ? '#0F3A35' : '#F0FCF9',
+      borderColor: isDark ? '#1CC7B4' : '#9DDCD5',
+      borderRadius: 14,
+      borderWidth: 1,
+      paddingVertical: 14,
       paddingHorizontal: 14,
+      shadowColor: '#0F172A',
+      shadowOpacity: isDark ? 0.16 : 0.08,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 5,
     },
     selectionHeader: {
       flexDirection: 'row',
@@ -1183,28 +1291,47 @@ function createStyles(palette, isDark, responsiveMetrics) {
       gap: 8,
     },
     selectionIcon: {
-      width: 30,
-      height: 30,
-      borderRadius: 999,
+      width: 36,
+      height: 36,
+      borderRadius: 12,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: isDark ? '#123A37' : '#DDF7F3',
+      backgroundColor: isDark ? '#11312D' : '#E2F8F5',
       borderWidth: 1,
-      borderColor: isDark ? '#1FAF9E' : '#9EDFD6',
+      borderColor: isDark ? '#1FAF9E' : '#9DDCD5',
     },
     selectionCopy: {
       flex: 1,
       gap: 1,
+      minWidth: 0,
     },
     selectionTitle: {
       color: palette.ink900,
-      fontSize: 14,
-      fontWeight: '800',
+      fontSize: 16,
+      lineHeight: 20,
+      fontWeight: '900',
     },
     selectionBody: {
       color: palette.ink700,
-      fontSize: 11,
-      lineHeight: 15,
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: '700',
+    },
+    selectionStatusPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: isDark ? '#1A655E' : '#9DDCD5',
+      backgroundColor: isDark ? '#11312D' : '#E2F8F5',
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+    },
+    selectionStatusText: {
+      color: palette.teal600,
+      fontSize: 10,
+      fontWeight: '900',
     },
     checkpointCard: {
       gap: 8,
@@ -1292,31 +1419,81 @@ function createStyles(palette, isDark, responsiveMetrics) {
     },
     statusStripCard: {
       flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
-      padding: 10,
+      flexWrap: 'nowrap',
+      gap: responsiveMetrics.width < 420 ? 6 : 8,
     },
     statusStripItem: {
-      minWidth: 96,
       flexGrow: 1,
+      flexBasis: 0,
+      minWidth: 0,
+      minHeight: responsiveMetrics.width < 420 ? 56 : 76,
       borderWidth: 1,
-      borderColor: palette.line,
-      backgroundColor: isDark ? palette.mist : '#F4F9FE',
-      borderRadius: 12,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
+      borderColor: isDark ? '#31506E' : '#D7E2EC',
+      backgroundColor: isDark ? '#132A3D' : '#FFFFFF',
+      borderRadius: responsiveMetrics.width < 420 ? 10 : 12,
+      paddingHorizontal: responsiveMetrics.width < 420 ? 7 : 10,
+      paddingVertical: responsiveMetrics.width < 420 ? 8 : 10,
+      justifyContent: 'space-between',
+      shadowColor: '#0F172A',
+      shadowOpacity: isDark ? 0.1 : 0.05,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 4 },
+      elevation: 2,
+    },
+    statusStripItemWarning: {
+      borderColor: isDark ? '#8A3147' : '#F3A6B4',
+      backgroundColor: isDark ? '#451A27' : '#FFF4F6',
+    },
+    statusStripItemSuccess: {
+      borderColor: isDark ? '#1A655E' : '#B9E7DE',
+      backgroundColor: isDark ? '#132A3D' : '#FFFFFF',
+    },
+    statusStripLabelRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: responsiveMetrics.width < 420 ? 3 : 5,
     },
     statusStripLabel: {
       color: palette.ink500,
-      fontSize: 9,
+      fontSize: responsiveMetrics.width < 420 ? 7 : 10,
       fontWeight: '900',
       textTransform: 'uppercase',
     },
+    statusStripLabelWarning: {
+      color: palette.errorText,
+    },
     statusStripValue: {
-      marginTop: 3,
+      marginTop: responsiveMetrics.width < 420 ? 4 : 7,
       color: palette.ink900,
-      fontSize: 12,
+      fontSize: responsiveMetrics.width < 420 ? 13 : 19,
+      lineHeight: responsiveMetrics.width < 420 ? 16 : 23,
       fontWeight: '900',
+    },
+    statusStripValueOnline: {
+      color: palette.teal500,
+    },
+    statusStripValueRow: {
+      marginTop: responsiveMetrics.width < 420 ? 4 : 7,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: responsiveMetrics.width < 420 ? 4 : 6,
+    },
+    statusStripValueInline: {
+      marginTop: 0,
+    },
+    statusStripDot: {
+      width: responsiveMetrics.width < 420 ? 6 : 8,
+      height: responsiveMetrics.width < 420 ? 6 : 8,
+      borderRadius: 999,
+    },
+    statusStripDotOnline: {
+      backgroundColor: palette.teal600,
+    },
+    statusStripDotOffline: {
+      backgroundColor: palette.errorText,
+    },
+    statusStripValueWarning: {
+      color: palette.errorText,
     },
     offlineCard: {
       gap: 12,
@@ -1325,23 +1502,31 @@ function createStyles(palette, isDark, responsiveMetrics) {
     },
     geofenceCard: {
       gap: 12,
-      backgroundColor: isDark ? '#102738' : '#F0FAFF',
-      borderColor: isDark ? '#235979' : '#B7E5F4',
+      backgroundColor: isDark ? '#102A3F' : '#FFFFFF',
+      borderColor: isDark ? '#245B78' : '#CFE0EE',
+      borderRadius: 14,
+      borderWidth: 1,
+      padding: 16,
+      shadowColor: '#0F172A',
+      shadowOpacity: isDark ? 0.12 : 0.06,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 6 },
+      elevation: 3,
     },
     geofenceHeader: {
       flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
+      alignItems: 'flex-start',
+      gap: 14,
     },
     geofenceIcon: {
-      width: 36,
-      height: 36,
+      width: 50,
+      height: 50,
       borderRadius: 999,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: isDark ? '#173A4D' : '#DDF5FC',
+      backgroundColor: isDark ? '#0F4B4D' : '#E2F8F5',
       borderWidth: 1,
-      borderColor: isDark ? '#2A7694' : '#A5DDED',
+      borderColor: isDark ? '#1CC7B4' : '#9DDCD5',
     },
     geofenceCopy: {
       flex: 1,
@@ -1357,12 +1542,41 @@ function createStyles(palette, isDark, responsiveMetrics) {
     geofenceTitle: {
       color: palette.ink900,
       fontSize: 15,
-      fontWeight: '800',
+      fontWeight: '900',
     },
     geofenceBody: {
       color: palette.ink700,
       fontSize: 12,
-      lineHeight: 18,
+      lineHeight: 17,
+      fontWeight: '700',
+      marginTop: 6,
+    },
+    geofenceDivider: {
+      height: 1,
+      backgroundColor: isDark ? '#284A63' : '#E0EAF2',
+    },
+    geofenceRetryButton: {
+      minHeight: 42,
+      borderRadius: 9,
+      borderWidth: 1,
+      borderColor: palette.teal600,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: isDark ? '#0D3A34' : '#ECFBF9',
+    },
+    geofenceRetryButtonPressed: {
+      transform: [{ scale: 0.99 }],
+      backgroundColor: isDark ? '#104940' : '#D9F5F1',
+    },
+    geofenceRetryButtonDisabled: {
+      opacity: 0.65,
+    },
+    geofenceRetryText: {
+      color: palette.teal500,
+      fontSize: 13,
+      fontWeight: '900',
     },
     zoneBadge: {
       flexDirection: 'row',
@@ -1370,7 +1584,7 @@ function createStyles(palette, isDark, responsiveMetrics) {
       gap: 4,
       borderRadius: 999,
       paddingHorizontal: 8,
-      paddingVertical: 4,
+      paddingVertical: 3,
       borderWidth: 1,
     },
     zoneBadge_inside: {
@@ -1382,8 +1596,8 @@ function createStyles(palette, isDark, responsiveMetrics) {
       borderColor: isDark ? '#70464A' : '#F0AAB4',
     },
     zoneBadge_accuracy: {
-      backgroundColor: isDark ? '#30240F' : '#FFF8E8',
-      borderColor: isDark ? '#6F561D' : '#E9C76F',
+      backgroundColor: isDark ? '#7A4C05' : '#FFF3C4',
+      borderColor: isDark ? '#F59E0B' : '#D97706',
     },
     zoneBadge_checking: {
       backgroundColor: isDark ? '#172638' : '#EEF6FF',
@@ -1399,8 +1613,11 @@ function createStyles(palette, isDark, responsiveMetrics) {
     },
     zoneBadgeText: {
       color: palette.ink900,
-      fontSize: 11,
-      fontWeight: '800',
+      fontSize: 10,
+      fontWeight: '900',
+    },
+    zoneBadgeText_accuracy: {
+      color: isDark ? '#FFF7D6' : '#7A4C05',
     },
     offlineHeader: {
       flexDirection: 'row',
@@ -1504,3 +1721,4 @@ function createStyles(palette, isDark, responsiveMetrics) {
     },
   }, responsiveMetrics, { exclude: ['siteAccent.left', 'siteAccent.right'] }));
 }
+
