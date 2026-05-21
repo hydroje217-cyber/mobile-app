@@ -18,6 +18,8 @@ export default function ResetPasswordScreen({ navigation, initialMessage = '', i
   const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [message, setMessage] = useState(initialMessage);
   const [tone, setTone] = useState(initialTone);
   const [loading, setLoading] = useState(false);
@@ -84,18 +86,24 @@ export default function ResetPasswordScreen({ navigation, initialMessage = '', i
           value={password}
           onChangeText={setPassword}
           placeholder="Minimum 6 characters"
-          secureTextEntry
+          secureTextEntry={!showPassword}
           autoCapitalize="none"
           icon={<Ionicons name="lock-closed-outline" size={18} color={palette.ink500} />}
+          trailingIcon={<Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={18} color={palette.ink500} />}
+          onPressTrailingIcon={() => setShowPassword((current) => !current)}
+          trailingAccessibilityLabel={showPassword ? 'Hide new password' : 'Show new password'}
         />
         <FormField
           label="Confirm password"
           value={confirmPassword}
           onChangeText={setConfirmPassword}
           placeholder="Re-enter your new password"
-          secureTextEntry
+          secureTextEntry={!showConfirmPassword}
           autoCapitalize="none"
           icon={<Ionicons name="checkmark-circle-outline" size={18} color={palette.ink500} />}
+          trailingIcon={<Ionicons name={showConfirmPassword ? 'eye-off-outline' : 'eye-outline'} size={18} color={palette.ink500} />}
+          onPressTrailingIcon={() => setShowConfirmPassword((current) => !current)}
+          trailingAccessibilityLabel={showConfirmPassword ? 'Hide confirmed password' : 'Show confirmed password'}
         />
 
         <PrimaryButton

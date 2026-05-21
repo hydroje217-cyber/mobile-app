@@ -21,6 +21,7 @@ export default function ScreenShell({
   onHeaderActionPress,
   showMenuButton = false,
   onAccountEditPress,
+  onTutorialPress,
   hideThemeToggle = false,
   children,
   scroll = true,
@@ -159,6 +160,18 @@ export default function ScreenShell({
                       styles={styles}
                       menuItem
                     />
+                  ) : null}
+                  {onTutorialPress ? (
+                    <Pressable
+                      onPress={() => {
+                        setAccountOpen(false);
+                        onTutorialPress();
+                      }}
+                      style={({ pressed }) => [styles.accountActionButton, styles.accountTutorialButton, pressed && styles.menuButtonPressed]}
+                    >
+                      <Ionicons name="school-outline" size={15} color={isDark ? '#A9EAF2' : '#0A6672'} />
+                      <Text style={[styles.accountActionText, styles.accountTutorialText]}>Tutorial</Text>
+                    </Pressable>
                   ) : null}
                   {onAccountEditPress ? (
                     <Pressable
@@ -539,9 +552,16 @@ function createStyles(palette, isDark, metrics) {
       borderColor: isDark ? '#276A77' : '#A5DCE5',
       backgroundColor: isDark ? '#102F3A' : '#EAFBFF',
     },
+    accountTutorialButton: {
+      borderColor: isDark ? '#1D8C91' : '#8ADCD6',
+      backgroundColor: isDark ? '#0F3A35' : '#E5F8F6',
+    },
     accountActionText: {
       fontSize: 11,
       fontWeight: '900',
+    },
+    accountTutorialText: {
+      color: isDark ? '#A9EAF2' : '#0A6672',
     },
     accountEditText: {
       color: isDark ? '#A9EAF2' : '#0A6672',

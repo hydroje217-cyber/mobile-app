@@ -175,6 +175,9 @@ export default function NemeXusApp() {
           },
         }));
       },
+      openTutorial: () => {
+        setRoute({ name: 'site-selection', params: { liveTutorial: true, tutorialRunId: Date.now() } });
+      },
       reset: () => setRoute(initialRoute),
       finishPasswordReset: () => {
         clearPasswordRecovery();
@@ -195,7 +198,14 @@ export default function NemeXusApp() {
   const isGeneralManager = profile?.role === 'general_manager';
   const isOperator = profile?.role === 'operator';
   const isApprovedForApp = Boolean(profile?.is_active && (profile?.is_approved || isPrivileged));
-  const routeName = route.name === 'home' ? (isPrivileged ? 'office-dashboard' : 'site-selection') : route.name;
+  const needsOperatorTutorial = Boolean(isOperator && isApprovedForApp && !profile?.operator_tutorial_seen);
+  const routeName = route.name === 'home'
+    ? isPrivileged
+      ? 'office-dashboard'
+      : 'site-selection'
+    : needsOperatorTutorial && route.name !== 'account-edit'
+      ? 'site-selection'
+      : route.name;
 
   if (!supabaseReady) {
     screen = <SetupRequiredScreen />;
@@ -222,7 +232,14 @@ export default function NemeXusApp() {
   } else if (routeName === 'office-graphs' && isPrivileged) {
     screen = <OfficeGraphsScreen navigation={navigation} />;
   } else if (routeName === 'site-selection') {
-    screen = <SiteSelectionScreen navigation={navigation} onSelectedSiteChange={setOperatorSite} />;
+    screen = (
+      <SiteSelectionScreen
+        navigation={navigation}
+        onSelectedSiteChange={setOperatorSite}
+        liveTutorial={Boolean(isOperator && (needsOperatorTutorial || route.params?.liveTutorial))}
+        tutorialRunId={route.params?.tutorialRunId}
+      />
+    );
   } else if (routeName === 'submit-reading') {
     screen = (
       <SubmitReadingScreen

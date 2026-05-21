@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import Card from '../components/Card';
@@ -38,30 +38,35 @@ function readingOperatorName(reading) {
   return reading?.submitted_profile?.full_name || reading?.submitted_profile?.email || 'another operator';
 }
 
+const liveTutorialSteps = [
+  {
+    target: 'options',
+    icon: 'business-outline',
+    title: 'Start with your assigned site',
+    body: 'These cards are the real site choices for your shift. Tap the card for the facility you are working on.',
+  },
+  {
+    target: 'gps',
+    icon: 'navigate-outline',
+    title: 'Check GPS authorization',
+    body: 'The GPS panel confirms whether you are inside the allowed site zone before submitting readings.',
+  },
+  {
+    target: 'submit',
+    icon: 'create-outline',
+    title: 'Submit the checkpoint',
+    body: 'After selecting a valid site, use this button to enter and save the current checkpoint reading.',
+  },
+  {
+    target: 'status',
+    icon: 'pulse-outline',
+    title: 'Track shift status',
+    body: 'This status card shows the active shift, today’s progress, and whether readings are syncing online.',
+  },
+];
+
 function SkeletonBlock({ styles, style }) {
   return <View style={[styles.skeletonBlock, style]} />;
-}
-
-function CheckpointSkeleton({ styles }) {
-  return (
-    <View style={styles.pendingCheckpointStack}>
-      {[0, 1].map((item) => (
-        <Card key={item} style={[styles.checkpointCard, styles.skeletonCard]}>
-          <View style={styles.checkpointHeader}>
-            <SkeletonBlock styles={styles} style={styles.skeletonIcon} />
-            <View style={styles.checkpointCopy}>
-              <View style={styles.checkpointTitleRow}>
-                <SkeletonBlock styles={styles} style={styles.skeletonTitleLine} />
-                <SkeletonBlock styles={styles} style={styles.skeletonBadge} />
-              </View>
-              <SkeletonBlock styles={styles} style={styles.skeletonBodyLine} />
-              <SkeletonBlock styles={styles} style={styles.skeletonShortLine} />
-            </View>
-          </View>
-        </Card>
-      ))}
-    </View>
-  );
 }
 
 function StatusStripSkeleton({ styles }) {
@@ -101,12 +106,14 @@ function SiteOptionsSkeleton({ styles }) {
   );
 }
 
-export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }) {
-  const { profile } = useAuth();
+export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, liveTutorial = false, tutorialRunId = 0 }) {
+  const { profile, completeOperatorTutorial } = useAuth();
   const { palette, isDark } = useTheme();
   const { width } = useWindowDimensions();
   const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
   const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
+  const tutorialScrollRef = useRef(null);
+  const tutorialTargetLayouts = useRef({});
   const isPrivileged = ['admin', 'supervisor', 'manager', 'general_manager'].includes(profile?.role);
   const [sites, setSites] = useState([]);
   const [selectedSite, setSelectedSite] = useState(null);
@@ -122,14 +129,14 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
   const [geofenceTone, setGeofenceTone] = useState('info');
   const [currentSlot, setCurrentSlot] = useState(() => roundDownTo30MinSlot(new Date()));
   const [currentSlotReading, setCurrentSlotReading] = useState(null);
-  const [currentSlotReadingsBySite, setCurrentSlotReadingsBySite] = useState({});
-  const [slotReadingsLoading, setSlotReadingsLoading] = useState(false);
   const [checkpointSummary, setCheckpointSummary] = useState({
     completed: 0,
     missing: 0,
     expected: 0,
   });
   const [checkpointLoading, setCheckpointLoading] = useState(false);
+  const [liveTutorialVisible, setLiveTutorialVisible] = useState(Boolean(liveTutorial));
+  const [liveTutorialStep, setLiveTutorialStep] = useState(0);
   const [connectionOnline, setConnectionOnline] = useState(() => {
     if (typeof navigator === 'undefined') {
       return true;
@@ -137,10 +144,6 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
 
     return navigator.onLine !== false;
   });
-  const pendingCurrentSlotSites = useMemo(
-    () => sites.filter((site) => !currentSlotReadingsBySite[String(site.id)]),
-    [currentSlotReadingsBySite, sites]
-  );
   const geofenceBySiteId = useMemo(() => {
     return Object.fromEntries(
       sites.map((site) => [String(site.id), evaluateSiteGeofence(site, operatorLocation)])
@@ -168,6 +171,56 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
     needed: 'GPS needed',
     inactive: 'No GPS fence',
   }[selectedZoneState];
+  const activeTutorialTarget = liveTutorialVisible ? liveTutorialSteps[liveTutorialStep]?.target : null;
+
+  function registerTutorialTarget(target) {
+    return (event) => {
+      tutorialTargetLayouts.current[target] = event.nativeEvent.layout.y;
+    };
+  }
+
+  useEffect(() => {
+    if (!liveTutorial) {
+      return;
+    }
+
+    setLiveTutorialStep(0);
+    setLiveTutorialVisible(true);
+  }, [liveTutorial, tutorialRunId]);
+
+  useEffect(() => {
+    if (!liveTutorialVisible || !activeTutorialTarget) {
+      return undefined;
+    }
+
+    const timeoutId = setTimeout(() => {
+      const y = tutorialTargetLayouts.current[activeTutorialTarget];
+      if (typeof y === 'number') {
+        tutorialScrollRef.current?.scrollTo?.({
+          y: Math.max(y - 18, 0),
+          animated: true,
+        });
+      }
+    }, 120);
+
+    return () => clearTimeout(timeoutId);
+  }, [activeTutorialTarget, liveTutorialVisible]);
+
+  async function finishLiveTutorial() {
+    setLiveTutorialVisible(false);
+    setLiveTutorialStep(0);
+    await completeOperatorTutorial?.();
+    navigation.navigate('site-selection');
+  }
+
+  function advanceLiveTutorial() {
+    if (liveTutorialStep >= liveTutorialSteps.length - 1) {
+      finishLiveTutorial();
+      return;
+    }
+
+    setLiveTutorialStep((current) => current + 1);
+  }
   const selectedZoneIcon = {
     inside: 'checkmark-circle',
     outside: 'close-circle',
@@ -313,53 +366,6 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
-
-  useEffect(() => {
-    let mounted = true;
-
-    async function loadCurrentSlotBySite() {
-      if (!sites.length) {
-        setCurrentSlotReadingsBySite({});
-        return;
-      }
-
-      setSlotReadingsLoading(true);
-
-      try {
-        const rows = await Promise.all(
-          sites.map(async (site) => {
-            const reading = await getReadingForSlot({
-              siteId: site.id,
-              siteType: site.type,
-              slotIso: currentSlot.toISOString(),
-            });
-
-            return [String(site.id), reading];
-          })
-        );
-
-        if (!mounted) {
-          return;
-        }
-
-        setCurrentSlotReadingsBySite(Object.fromEntries(rows));
-      } catch {
-        if (mounted) {
-          setCurrentSlotReadingsBySite({});
-        }
-      } finally {
-        if (mounted) {
-          setSlotReadingsLoading(false);
-        }
-      }
-    }
-
-    loadCurrentSlotBySite();
-
-    return () => {
-      mounted = false;
-    };
-  }, [currentSlot, sites]);
 
   useEffect(() => {
     let mounted = true;
@@ -547,7 +553,6 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
   }
 
   const showSiteSkeleton = loading && !sites.length;
-  const showCheckpointSkeleton = showSiteSkeleton || (slotReadingsLoading && !Object.keys(currentSlotReadingsBySite).length);
   const showStatusSkeleton = showSiteSkeleton || (checkpointLoading && !selectedSite);
 
   return (
@@ -557,59 +562,74 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
       subtitle={`Signed in as ${profile?.full_name || profile?.email || 'User'} (${profile?.role || 'operator'})`}
       showMenuButton
       onAccountEditPress={navigation.openAccountEdit}
+      onTutorialPress={navigation.openTutorial}
+      scrollRef={tutorialScrollRef}
+      floatingOverlay={
+        liveTutorialVisible ? (
+          <View
+            style={[
+              styles.liveTutorialOverlay,
+              activeTutorialTarget === 'submit' && styles.liveTutorialOverlayTop,
+            ]}
+            pointerEvents="box-none"
+          >
+            <View style={styles.liveTutorialBackdrop} pointerEvents="none" />
+            <Card style={styles.liveTutorialCard}>
+              <View style={styles.liveTutorialTopRow}>
+                <View style={styles.liveTutorialIcon}>
+                  <Ionicons name={liveTutorialSteps[liveTutorialStep].icon} size={19} color={palette.cyan300} />
+                </View>
+                <View style={styles.liveTutorialCopy}>
+                  <Text style={styles.liveTutorialEyebrow}>
+                    Step {liveTutorialStep + 1} of {liveTutorialSteps.length}
+                  </Text>
+                  <Text style={styles.liveTutorialTitle}>{liveTutorialSteps[liveTutorialStep].title}</Text>
+                </View>
+              </View>
+              <Text style={styles.liveTutorialBody}>{liveTutorialSteps[liveTutorialStep].body}</Text>
+              <View style={styles.liveTutorialDots}>
+                {liveTutorialSteps.map((step, index) => (
+                  <View
+                    key={step.title}
+                    style={[styles.liveTutorialDot, index === liveTutorialStep && styles.liveTutorialDotActive]}
+                  />
+                ))}
+              </View>
+              <View style={styles.liveTutorialActions}>
+                <Pressable onPress={finishLiveTutorial} style={({ pressed }) => [styles.liveTutorialSkip, pressed && styles.liveTutorialPressed]}>
+                  <Text style={styles.liveTutorialSkipText}>Skip</Text>
+                </Pressable>
+                <Pressable onPress={advanceLiveTutorial} style={({ pressed }) => [styles.liveTutorialNext, pressed && styles.liveTutorialPressed]}>
+                  <Text style={styles.liveTutorialNextText}>
+                    {liveTutorialStep === liveTutorialSteps.length - 1 ? 'Finish' : 'Next'}
+                  </Text>
+                  <Ionicons
+                    name={liveTutorialStep === liveTutorialSteps.length - 1 ? 'checkmark-outline' : 'arrow-forward-outline'}
+                    size={15}
+                    color={palette.onAccent}
+                  />
+                </Pressable>
+              </View>
+            </Card>
+          </View>
+        ) : null
+      }
     >
-      {showCheckpointSkeleton ? (
-        <CheckpointSkeleton styles={styles} />
-      ) : selectedSite && checkpointSummary.missing > 0 ? (
+      {selectedSite && checkpointSummary.missing > 0 ? (
         <MessageBanner tone="error">
           {checkpointSummary.missing} earlier checkpoint{checkpointSummary.missing === 1 ? '' : 's'} appear missing today for {selectedSite.name}.
         </MessageBanner>
       ) : selectedSite ? (
         <MessageBanner tone="success">No missed checkpoints detected today for {selectedSite.name}.</MessageBanner>
       ) : null}
-      {!showCheckpointSkeleton && pendingCurrentSlotSites.length ? (
-        <View style={styles.pendingCheckpointStack}>
-          {pendingCurrentSlotSites.map((site) => (
-            <Pressable
-              key={site.id}
-              onPress={() => handleNavigateToSubmit(site)}
-              style={({ pressed }) => [
-                styles.checkpointCard,
-                styles.checkpointCardDue,
-                pressed && styles.checkpointCardPressed,
-                getSiteCoordinates(site) && geofenceBySiteId[String(site.id)] && !geofenceBySiteId[String(site.id)].allowed
-                  ? styles.checkpointCardBlocked
-                  : null,
-              ]}
-            >
-              <View style={styles.checkpointHeader}>
-                <View style={styles.checkpointIcon}>
-                  <Ionicons name="radio-button-on-outline" size={18} color={palette.ink900} />
-                </View>
-                <View style={styles.checkpointCopy}>
-                  <View style={styles.checkpointTitleRow}>
-                    <Text style={styles.checkpointSiteName} numberOfLines={1}>{site.name}</Text>
-                    <View style={[styles.checkpointStatusBadge, styles.checkpointStatusPending]}>
-                      <Text style={styles.checkpointStatusText}>Not submitted</Text>
-                    </View>
-                  </View>
-                  <Text style={styles.checkpointTitle}>Current checkpoint due now</Text>
-                  <Text style={styles.checkpointBody}>
-                    Slot {formatTimestamp(currentSlot)} 
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={16} color={palette.ink500} />
-              </View>
-            </Pressable>
-          ))}
-        </View>
-      ) : !showCheckpointSkeleton && sites.length ? (
-        <MessageBanner tone="success">All sites are submitted for the current checkpoint.</MessageBanner>
-      ) : null}
 
       {showStatusSkeleton ? (
         <StatusStripSkeleton styles={styles} />
       ) : selectedSite ? (
+        <View
+          onLayout={registerTutorialTarget('status')}
+          style={[styles.tutorialTarget, activeTutorialTarget === 'status' && styles.tutorialTargetActive]}
+        >
         <Card style={styles.statusStripCard}>
           <View style={styles.statusStripItem}>
             <Text style={styles.statusStripLabel}>Shift</Text>
@@ -628,6 +648,7 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
             </Text>
           </View>
         </Card>
+        </View>
       ) : null}
       
       <Card style={styles.summaryCard}>
@@ -706,6 +727,10 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
       {offlineMessage ? <MessageBanner tone={offlineTone}>{offlineMessage}</MessageBanner> : null}
       {geofenceMessage ? <MessageBanner tone={geofenceTone}>{geofenceMessage}</MessageBanner> : null}
 
+      <View
+        onLayout={registerTutorialTarget('gps')}
+        style={[styles.tutorialTarget, activeTutorialTarget === 'gps' && styles.tutorialTargetActive]}
+      >
       <Card style={styles.geofenceCard}>
         <View style={styles.geofenceHeader}>
           <View style={styles.geofenceIcon}>
@@ -738,6 +763,7 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
           icon={<Ionicons name="locate-outline" size={16} color={palette.ink900} />}
         />
       </Card>
+      </View>
 
       {offlineCount ? (
         <Card style={styles.offlineCard}>
@@ -762,10 +788,14 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
         </Card>
       ) : null}
 
-      {loading ? (
-        <SiteOptionsSkeleton styles={styles} />
-      ) : (
-        <View style={styles.options}>
+      <View
+        onLayout={registerTutorialTarget('options')}
+        style={[styles.tutorialTarget, activeTutorialTarget === 'options' && styles.tutorialTargetActive]}
+      >
+        {loading ? (
+          <SiteOptionsSkeleton styles={styles} />
+        ) : (
+          <View style={styles.options}>
           {sites.map((site) => {
             const active = selectedSite?.id === site.id;
             const siteGeofence = geofenceBySiteId[String(site.id)];
@@ -775,7 +805,7 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
               <Pressable
                 key={site.id}
                 onPress={() => setSelectedSite(site)}
-                style={[styles.option, active && styles.optionActive, blocked && styles.optionBlocked]}
+                style={[styles.option, blocked && styles.optionBlocked, active && styles.optionActive]}
               >
                 <View style={[styles.optionAccent, active && styles.optionAccentActive]} />
                 <View style={styles.optionTopRow}>
@@ -823,10 +853,14 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }
               </Pressable>
             );
           })}
-        </View>
-      )}
+          </View>
+        )}
+      </View>
 
-      <View style={styles.actions}>
+      <View
+        onLayout={registerTutorialTarget('submit')}
+        style={[styles.actions, styles.tutorialTarget, activeTutorialTarget === 'submit' && styles.tutorialTargetActive]}
+      >
         <PrimaryButton
           label={currentSlotReading ? 'Current slot already saved' : 'Submit current checkpoint'}
           onPress={() => handleNavigateToSubmit(selectedSite)}
@@ -886,17 +920,153 @@ function createStyles(palette, isDark, responsiveMetrics) {
     actions: {
       gap: 12,
     },
+    tutorialTarget: {
+      borderWidth: 2,
+      borderColor: 'transparent',
+      borderRadius: 16,
+      padding: 3,
+      margin: -3,
+    },
+    tutorialTargetActive: {
+      borderColor: palette.cyan300,
+      backgroundColor: isDark ? 'rgba(103,232,249,0.08)' : 'rgba(20,184,166,0.1)',
+      shadowColor: palette.teal600,
+      shadowOpacity: isDark ? 0.24 : 0.18,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 0 },
+      elevation: 12,
+    },
+    liveTutorialOverlay: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+      justifyContent: 'flex-end',
+      padding: responsiveMetrics.contentPadding,
+      zIndex: 5000,
+      elevation: 5000,
+    },
+    liveTutorialOverlayTop: {
+      justifyContent: 'flex-start',
+      paddingTop: responsiveMetrics.contentPadding + 8,
+    },
+    liveTutorialBackdrop: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+      backgroundColor: isDark ? 'rgba(0,0,0,0.12)' : 'rgba(17,35,59,0.08)',
+    },
+    liveTutorialCard: {
+      gap: 12,
+      backgroundColor: isDark ? '#0B1724' : '#F8FCFF',
+      borderColor: isDark ? '#2B5877' : '#B8DDF0',
+      shadowColor: '#000000',
+      shadowOpacity: isDark ? 0.26 : 0.16,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 5200,
+    },
+    liveTutorialTopRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    liveTutorialIcon: {
+      width: 40,
+      height: 40,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: isDark ? '#102A3A' : '#163A5B',
+      borderWidth: 1,
+      borderColor: isDark ? '#1E5B70' : '#67E8F9',
+    },
+    liveTutorialCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    liveTutorialEyebrow: {
+      color: palette.teal600,
+      fontSize: 10,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+    },
+    liveTutorialTitle: {
+      color: palette.ink900,
+      fontSize: 17,
+      lineHeight: 22,
+      fontWeight: '900',
+    },
+    liveTutorialBody: {
+      color: palette.ink700,
+      fontSize: 13,
+      lineHeight: 19,
+      fontWeight: '700',
+    },
+    liveTutorialDots: {
+      flexDirection: 'row',
+      gap: 6,
+    },
+    liveTutorialDot: {
+      width: 7,
+      height: 7,
+      borderRadius: 999,
+      backgroundColor: isDark ? '#294C68' : '#C9DDF3',
+    },
+    liveTutorialDotActive: {
+      width: 20,
+      backgroundColor: palette.teal600,
+    },
+    liveTutorialActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    liveTutorialSkip: {
+      minHeight: 42,
+      paddingHorizontal: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 10,
+    },
+    liveTutorialSkipText: {
+      color: palette.ink700,
+      fontSize: 12,
+      fontWeight: '900',
+    },
+    liveTutorialNext: {
+      minHeight: 42,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 7,
+      paddingHorizontal: 16,
+      borderRadius: 10,
+      backgroundColor: palette.teal600,
+    },
+    liveTutorialNextText: {
+      color: palette.onAccent,
+      fontSize: 12,
+      fontWeight: '900',
+    },
+    liveTutorialPressed: {
+      transform: [{ scale: 0.98 }],
+    },
     option: {
       backgroundColor: palette.card,
       borderRadius: 12,
       borderWidth: 1,
-      borderColor: palette.line,
+      borderColor: isDark ? palette.line : '#CFE0EE',
       padding: 14,
       overflow: 'hidden',
     },
     optionActive: {
-      backgroundColor: palette.navy700,
-      borderColor: palette.cyan300,
+      backgroundColor: isDark ? palette.navy700 : '#163A5B',
+      borderColor: isDark ? palette.cyan300 : '#67E8F9',
     },
     optionBlocked: {
       opacity: 0.72,
@@ -909,10 +1079,10 @@ function createStyles(palette, isDark, responsiveMetrics) {
       left: 0,
       right: 0,
       height: 4,
-      backgroundColor: isDark ? '#31506E' : '#D5E8FA',
+      backgroundColor: isDark ? '#31506E' : '#BFD9EC',
     },
     optionAccentActive: {
-      backgroundColor: palette.cyan300,
+      backgroundColor: isDark ? palette.cyan300 : palette.teal500,
     },
     optionTopRow: {
       flexDirection: 'row',
@@ -928,11 +1098,11 @@ function createStyles(palette, isDark, responsiveMetrics) {
       justifyContent: 'center',
       backgroundColor: isDark ? '#152636' : '#EAF2FB',
       borderWidth: 1,
-      borderColor: palette.line,
+      borderColor: isDark ? palette.line : '#C9DDF3',
     },
     typeIconActive: {
-      backgroundColor: 'rgba(255,255,255,0.08)',
-      borderColor: 'rgba(255,255,255,0.18)',
+      backgroundColor: 'rgba(255,255,255,0.1)',
+      borderColor: 'rgba(255,255,255,0.24)',
     },
     optionCopy: {
       flex: 1,
@@ -966,14 +1136,14 @@ function createStyles(palette, isDark, responsiveMetrics) {
       gap: 6,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: palette.line,
-      backgroundColor: isDark ? '#152636' : '#F2F8FE',
+      borderColor: isDark ? palette.line : '#CFE0EE',
+      backgroundColor: isDark ? '#152636' : '#F3F8FC',
       paddingHorizontal: 10,
       paddingVertical: 6,
     },
     optionMetaPillActive: {
-      borderColor: 'rgba(255,255,255,0.18)',
-      backgroundColor: 'rgba(255,255,255,0.08)',
+      borderColor: 'rgba(255,255,255,0.22)',
+      backgroundColor: 'rgba(255,255,255,0.1)',
     },
     optionMetaText: {
       color: palette.ink700,
@@ -990,7 +1160,7 @@ function createStyles(palette, isDark, responsiveMetrics) {
       backgroundColor: isDark ? '#15312D' : '#E8F7F6',
     },
     badgeActive: {
-      backgroundColor: isDark ? '#17374D' : '#E6FBFF',
+      backgroundColor: isDark ? '#17374D' : '#D9FBFF',
     },
     badgeLabel: {
       color: palette.teal600,
@@ -998,7 +1168,7 @@ function createStyles(palette, isDark, responsiveMetrics) {
       fontWeight: '800',
     },
     badgeLabelActive: {
-      color: palette.ink900,
+      color: isDark ? palette.ink900 : '#164E63',
     },
     selectionCard: {
       gap: 6,
@@ -1041,19 +1211,12 @@ function createStyles(palette, isDark, responsiveMetrics) {
       paddingVertical: 12,
       paddingHorizontal: 14,
     },
-    pendingCheckpointStack: {
-      gap: 8,
-    },
     checkpointCardPressed: {
       transform: [{ scale: 0.99 }],
     },
     checkpointCardDue: {
       backgroundColor: isDark ? '#182235' : '#F2F6FF',
       borderColor: isDark ? '#334769' : '#C7D7F5',
-    },
-    checkpointCardBlocked: {
-      backgroundColor: isDark ? '#24161B' : '#FFF5F6',
-      borderColor: isDark ? '#70464A' : '#F0B8BE',
     },
     checkpointCardComplete: {
       backgroundColor: isDark ? '#112B24' : '#ECFCF8',
