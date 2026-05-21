@@ -1,14 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import * as ExpoLinking from 'expo-linking';
+import * as SecureStore from 'expo-secure-store';
 import { AppState, Platform } from 'react-native';
 import { supabase, supabaseReady } from '../lib/supabase';
 import { isRecoveryUrl, readRecoveryParams } from '../utils/authRecovery';
 
 const AuthContext = createContext(null);
-
-function getPasswordResetRedirectUrl() {
-  return ExpoLinking.createURL('reset-password');
-}
+const PROFILE_SELECT = 'id, email, full_name, role, is_active, is_approved, approved_at, approved_by, last_seen_at, operator_tutorial_seen';
+const PROFILE_SELECT_FALLBACK = 'id, email, full_name, role, is_active, is_approved, approved_at, approved_by, last_seen_at';
 
 async function ensureProfile(user) {
   if (!supabase || !user) {
@@ -17,9 +15,17 @@ async function ensureProfile(user) {
 
   let query = await supabase
     .from('profiles')
-    .select('id, email, full_name, role, is_active, is_approved, approved_at, approved_by, last_seen_at')
+    .select(PROFILE_SELECT)
     .eq('id', user.id)
     .maybeSingle();
+
+  if (isMissingColumnError(query.error)) {
+    query = await supabase
+      .from('profiles')
+      .select(PROFILE_SELECT_FALLBACK)
+      .eq('id', user.id)
+      .maybeSingle();
+  }
 
   if (query.error) {
     throw query.error;
@@ -41,16 +47,53 @@ async function ensureProfile(user) {
 
     query = await supabase
       .from('profiles')
-      .select('id, email, full_name, role, is_active, is_approved, approved_at, approved_by, last_seen_at')
+      .select(PROFILE_SELECT)
       .eq('id', user.id)
       .maybeSingle();
+
+    if (isMissingColumnError(query.error)) {
+      query = await supabase
+        .from('profiles')
+        .select(PROFILE_SELECT_FALLBACK)
+        .eq('id', user.id)
+        .maybeSingle();
+    }
 
     if (query.error) {
       throw query.error;
     }
   }
 
-  return query.data;
+  const localTutorialSeen = await getLocalOperatorTutorialSeen(user.id);
+
+  return {
+    ...query.data,
+    operator_tutorial_seen: Boolean(query.data?.operator_tutorial_seen || localTutorialSeen),
+  };
+}
+
+function getOperatorTutorialKey(userId) {
+  return `operator_tutorial_seen:${userId}`;
+}
+
+async function getLocalOperatorTutorialSeen(userId) {
+  if (!userId) {
+    return false;
+  }
+
+  try {
+    return (await SecureStore.getItemAsync(getOperatorTutorialKey(userId))) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+async function setLocalOperatorTutorialSeen(userId) {
+  if (!userId) {
+    return;
+  }
+
+  await SecureStore.setItemAsync(getOperatorTutorialKey(userId), 'true');
 }
 
 function getClientInfo() {
@@ -119,6 +162,42 @@ function isMissingColumnError(error) {
     /column .* does not exist/i.test(error?.message || '') ||
     /could not find .* column/i.test(error?.message || '')
   );
+}
+
+function isInvalidRefreshTokenError(error) {
+  const message = error?.message || '';
+
+  return (
+    error?.name === 'AuthApiError' &&
+    /refresh token/i.test(message)
+  ) || /invalid refresh token|refresh token.*not found|already used/i.test(message);
+}
+
+function isMissingPasswordResetTableError(error) {
+  const message = error?.message || '';
+
+  return (
+    error?.code === '42P01' ||
+    error?.code === 'PGRST205' ||
+    /password_reset_requests/i.test(message) ||
+    /schema cache/i.test(message)
+  );
+}
+
+async function clearStoredAuthSession() {
+  if (!supabase) {
+    return;
+  }
+
+  try {
+    await supabase.auth.signOut({ scope: 'local' });
+  } catch {
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // The stored token is already unusable; local state will still be cleared.
+    }
+  }
 }
 
 async function insertLoginLogWithFallback(loginLog) {
@@ -283,6 +362,15 @@ export function AuthProvider({ children }) {
       }
 
       if (error) {
+        if (isInvalidRefreshTokenError(error)) {
+          await clearStoredAuthSession();
+          setSession(null);
+          setProfile(null);
+          setAuthMessage('Your previous sign-in expired. Please sign in again.');
+          setLoading(false);
+          return;
+        }
+
         setAuthMessage(error.message);
         setLoading(false);
         return;
@@ -461,17 +549,36 @@ export function AuthProvider({ children }) {
           return { ok: false, message: 'Supabase is not configured yet.' };
         }
 
-        const { error } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: getPasswordResetRedirectUrl(),
-        });
+        const normalizedEmail = email?.trim()?.toLowerCase();
+
+        if (!normalizedEmail) {
+          return { ok: false, message: 'Enter your email before requesting a password reset.' };
+        }
+
+        const { error } = await supabase
+          .from('password_reset_requests')
+          .insert({
+            email: normalizedEmail,
+            status: 'pending',
+          });
 
         if (error) {
-          return { ok: false, message: error.message };
+          if (isMissingPasswordResetTableError(error)) {
+            return {
+              ok: false,
+              message: 'Password reset approval is not set up yet. Ask an admin to run the Supabase password-reset-approval SQL migration.',
+            };
+          }
+
+          return {
+            ok: false,
+            message: error.message || 'Unable to request password reset approval.',
+          };
         }
 
         return {
           ok: true,
-          message: 'Password reset email sent. Open the link to choose a new password.',
+          message: 'Password reset request sent. An admin or general manager must approve it before the reset email is sent.',
         };
       },
       recoverSessionFromUrl,
@@ -537,6 +644,34 @@ export function AuthProvider({ children }) {
               : 'Password updated successfully.',
         };
       },
+      async completeOperatorTutorial() {
+        const userId = session?.user?.id || profile?.id;
+
+        try {
+          await setLocalOperatorTutorialSeen(userId);
+        } catch (storageError) {
+          console.warn('Unable to save local tutorial status.', storageError);
+        }
+
+        if (supabase && userId) {
+          const { error } = await supabase
+            .from('profiles')
+            .update({ operator_tutorial_seen: true })
+            .eq('id', userId);
+
+          if (error && !isMissingColumnError(error)) {
+            console.warn('Unable to save operator tutorial status.', error);
+          }
+        }
+
+        setProfile((current) => (
+          current
+            ? { ...current, operator_tutorial_seen: true }
+            : current
+        ));
+
+        return { ok: true };
+      },
       async signOut() {
         if (!supabase) {
           clearAuthState('');
@@ -546,6 +681,11 @@ export function AuthProvider({ children }) {
         const { error } = await supabase.auth.signOut();
 
         if (error) {
+          if (isInvalidRefreshTokenError(error)) {
+            clearAuthState('');
+            return { ok: true, message: 'Signed out.' };
+          }
+
           return { ok: false, message: error.message || 'Failed to sign out.' };
         }
 

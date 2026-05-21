@@ -1485,6 +1485,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
       title="Reading History"
       showMenuButton
       onAccountEditPress={navigation.openAccountEdit}
+      onTutorialPress={navigation.openTutorial}
       stickyHeader
       statusChips={headerStatusChips}
       refreshing={loading}

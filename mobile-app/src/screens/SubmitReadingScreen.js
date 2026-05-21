@@ -1100,6 +1100,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
         onHeaderActionPress={navigation.goBack}
         showMenuButton
         onAccountEditPress={navigation.openAccountEdit}
+        onTutorialPress={navigation.openTutorial}
         keyboardAware
         keyboardAwareProps={{
           keyboardOpeningTime: 0,
