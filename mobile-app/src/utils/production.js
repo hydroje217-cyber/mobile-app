@@ -278,6 +278,59 @@ export function aggregateDailyRows(items, fieldConfigs, options = {}) {
     });
 }
 
+export function aggregateDailySummaryRows(items, fieldConfigs, options = {}) {
+  const { visibleFromDate, visibleToDate } = options;
+  const grouped = items.reduce((map, item) => {
+    const key = dayKeyFromSummary(item);
+    if (!key) {
+      return map;
+    }
+
+    const current = map.get(key) || [];
+    current.push(item);
+    map.set(key, current);
+    return map;
+  }, new Map());
+
+  return Array.from(grouped.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .filter(([date]) => isVisibleDate(date, { visibleFromDate, visibleToDate }))
+    .map(([date, rows]) => {
+      const result = {
+        id: `summary:${date}`,
+        date,
+        source: 'daily_site_summaries',
+      };
+
+      fieldConfigs.forEach((config) => {
+        const field = config.summaryField;
+        if (!field) {
+          return;
+        }
+
+        result[config.key] =
+          config.summaryAggregate === 'sum'
+            ? sumForField(rows, field)
+            : averageForField(rows, field);
+      });
+
+      return result;
+    });
+}
+
+export function mergeDailyRowsWithSummaries(calculatedRows, summaryRows) {
+  const rowsByDate = new Map(calculatedRows.map((row) => [row.date, row]));
+
+  summaryRows.forEach((row) => {
+    rowsByDate.set(row.date, {
+      ...(rowsByDate.get(row.date) || {}),
+      ...row,
+    });
+  });
+
+  return Array.from(rowsByDate.values());
+}
+
 export function buildDailyTotalizerRows(readings, options = {}) {
   return aggregateDailyRows(
     readings,

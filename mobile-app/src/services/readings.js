@@ -11,6 +11,8 @@ const CHLORINATION_LEGACY_SELECT =
 
 const DEEPWELL_LEGACY_SELECT =
   'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, remarks, upstream_pressure_psi, downstream_pressure_psi, flowrate_m3hr, vfd_frequency_hz, voltage_l1_v, voltage_l2_v, voltage_l3_v, amperage_a, tds_ppm, power_kwh_shift, status, sites(id, name, type), submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)';
+const DAILY_SUMMARY_SELECT =
+  'id, site_id, summary_date, source, source_file, production_m3, power_kwh, chlorine_kg, avg_flowrate_m3hr, avg_pressure_psi, avg_rc_ppm, avg_turbidity_ntu, avg_ph, avg_tds_ppm, peroxide_liters, avg_upstream_pressure_psi, avg_downstream_pressure_psi, avg_vfd_frequency_hz, avg_voltage_l1_v, avg_voltage_l2_v, avg_voltage_l3_v, avg_amperage_a, site:sites!inner(id, name, type)';
 
 const READING_META = {
   CHLORINATION: {
@@ -64,6 +66,32 @@ function applyReadingFilters(query, { siteId, fromDate, toDate, limit }) {
     const end = new Date(`${toDate}T00:00:00`);
     end.setDate(end.getDate() + 1);
     nextQuery = nextQuery.lt('reading_datetime', end.toISOString());
+  }
+
+  return nextQuery;
+}
+
+function applyDailySummaryFilters(query, { siteId, siteType, fromDate, toDate, limit }) {
+  let nextQuery = query.order('summary_date', { ascending: false });
+
+  if (typeof limit === 'number' && Number.isFinite(limit)) {
+    nextQuery = nextQuery.limit(limit);
+  }
+
+  if (siteId) {
+    nextQuery = nextQuery.eq('site_id', siteId);
+  }
+
+  if (siteType) {
+    nextQuery = nextQuery.eq('site.type', siteType);
+  }
+
+  if (fromDate) {
+    nextQuery = nextQuery.gte('summary_date', fromDate);
+  }
+
+  if (toDate) {
+    nextQuery = nextQuery.lte('summary_date', toDate);
   }
 
   return nextQuery;
@@ -303,4 +331,17 @@ export async function listReadings({ siteId, siteType, fromDate, toDate, limit }
   ]
     .sort((a, b) => new Date(b.reading_datetime || 0).getTime() - new Date(a.reading_datetime || 0).getTime())
     .slice(0, typeof limit === 'number' && Number.isFinite(limit) ? limit : undefined);
+}
+
+export async function listDailySiteSummaries({ siteId, siteType, fromDate, toDate, limit }) {
+  const { data, error } = await applyDailySummaryFilters(
+    supabase.from('daily_site_summaries').select(DAILY_SUMMARY_SELECT),
+    { siteId, siteType, fromDate, toDate, limit }
+  );
+
+  if (error) {
+    throw error;
+  }
+
+  return data ?? [];
 }

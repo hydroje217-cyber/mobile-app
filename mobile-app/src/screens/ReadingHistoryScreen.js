@@ -21,10 +21,10 @@ import ScreenShell, { KeyboardScrollContext } from '../components/ScreenShell';
 import { EmptyState, LoadingState, SegmentChip, SplitExportButton } from '../components/UiControls';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { listReadings } from '../services/readings';
+import { listDailySiteSummaries, listReadings } from '../services/readings';
 import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 import { saveNativeExportFile, buildNativeExportSuccessMessage } from '../utils/exportFiles';
-import { aggregateDailyRows } from '../utils/production';
+import { aggregateDailyRows, aggregateDailySummaryRows, mergeDailyRowsWithSummaries } from '../utils/production';
 
 const DEFAULT_HISTORY_LIMIT = 50;
 const MAX_HISTORY_LIMIT = 200;
@@ -1100,30 +1100,30 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
   ];
 
   const chlorinationAverageFields = [
-    { key: 'pressure', field: 'pressure_psi', label: 'AVG PRESSURE (PSI)', width: 130 },
-    { key: 'rc', field: 'rc_ppm', label: 'AVG RESIDUAL CHLORINE (PPM)', width: 185 },
-    { key: 'turbidity', field: 'turbidity_ntu', label: 'AVG TURBIDITY (NTU)', width: 145 },
-    { key: 'ph', field: 'ph', label: 'AVG pH', width: 90 },
-    { key: 'tds', field: 'tds_ppm', label: 'AVG TDS (PPM)', width: 120 },
+    { key: 'pressure', field: 'pressure_psi', summaryField: 'avg_pressure_psi', label: 'AVG PRESSURE (PSI)', width: 130 },
+    { key: 'rc', field: 'rc_ppm', summaryField: 'avg_rc_ppm', label: 'AVG RESIDUAL CHLORINE (PPM)', width: 185 },
+    { key: 'turbidity', field: 'turbidity_ntu', summaryField: 'avg_turbidity_ntu', label: 'AVG TURBIDITY (NTU)', width: 145 },
+    { key: 'ph', field: 'ph', summaryField: 'avg_ph', label: 'AVG pH', width: 90 },
+    { key: 'tds', field: 'tds_ppm', summaryField: 'avg_tds_ppm', label: 'AVG TDS (PPM)', width: 120 },
     { key: 'tank', field: 'tank_level_liters', label: 'AVG TANK LEVEL (L)', width: 145 },
-    { key: 'flowrate', field: 'flowrate_m3hr', label: 'AVG FLOWRATE (M3/HR)', width: 150 },
-    { key: 'totalizer', field: 'totalizer', label: 'TOTALIZER', width: 120, aggregate: 'previousDayDifference' },
-    { key: 'powerConsumption', field: 'chlorination_power_kwh', label: 'POWER CONSUMPTION (KWH)', width: 190, aggregate: 'previousDayDifference' },
-    { key: 'chlorine', field: 'chlorine_consumed', label: 'AVG CHLORINE USED (KG)', width: 165 },
-    { key: 'peroxide', field: 'peroxide_consumption', label: 'AVG PEROXIDE CONSUMPTION', width: 190 },
+    { key: 'flowrate', field: 'flowrate_m3hr', summaryField: 'avg_flowrate_m3hr', label: 'AVG FLOWRATE (M3/HR)', width: 150 },
+    { key: 'totalizer', field: 'totalizer', summaryField: 'production_m3', label: 'TOTALIZER', width: 120, aggregate: 'previousDayDifference', summaryAggregate: 'sum' },
+    { key: 'powerConsumption', field: 'chlorination_power_kwh', summaryField: 'power_kwh', label: 'POWER CONSUMPTION (KWH)', width: 190, aggregate: 'previousDayDifference', summaryAggregate: 'sum' },
+    { key: 'chlorine', field: 'chlorine_consumed', summaryField: 'chlorine_kg', label: 'AVG CHLORINE USED (KG)', width: 165, summaryAggregate: 'sum' },
+    { key: 'peroxide', field: 'peroxide_consumption', summaryField: 'peroxide_liters', label: 'AVG PEROXIDE CONSUMPTION', width: 190, summaryAggregate: 'sum' },
   ];
 
   const deepwellAverageFields = [
-    { key: 'upstream', field: 'upstream_pressure_psi', label: 'AVG UPSTREAM PRESSURE (PSI)', width: 190 },
-    { key: 'downstream', field: 'downstream_pressure_psi', label: 'AVG DOWNSTREAM PRESSURE (PSI)', width: 210 },
-    { key: 'flowrate', field: 'flowrate_m3hr', label: 'AVG FLOWRATE (M3/HR)', width: 150 },
-    { key: 'frequency', field: 'vfd_frequency_hz', label: 'AVG VFD FREQUENCY (HZ)', width: 160 },
-    { key: 'l1', field: 'voltage_l1_v', label: 'AVG VOLTAGE L1 (V)', width: 145 },
-    { key: 'l2', field: 'voltage_l2_v', label: 'AVG VOLTAGE L2 (V)', width: 145 },
-    { key: 'l3', field: 'voltage_l3_v', label: 'AVG VOLTAGE L3 (V)', width: 145 },
-    { key: 'amps', field: 'amperage_a', label: 'AVG AMPERAGE (A)', width: 130 },
-    { key: 'tds', field: 'tds_ppm', label: 'AVG TDS (PPM)', width: 120 },
-    { key: 'power', field: 'power_kwh_shift', label: 'POWER CONSUMPTION (KWH)', width: 190, aggregate: 'previousDayDifference' },
+    { key: 'upstream', field: 'upstream_pressure_psi', summaryField: 'avg_upstream_pressure_psi', label: 'AVG UPSTREAM PRESSURE (PSI)', width: 190 },
+    { key: 'downstream', field: 'downstream_pressure_psi', summaryField: 'avg_downstream_pressure_psi', label: 'AVG DOWNSTREAM PRESSURE (PSI)', width: 210 },
+    { key: 'flowrate', field: 'flowrate_m3hr', summaryField: 'avg_flowrate_m3hr', label: 'AVG FLOWRATE (M3/HR)', width: 150 },
+    { key: 'frequency', field: 'vfd_frequency_hz', summaryField: 'avg_vfd_frequency_hz', label: 'AVG VFD FREQUENCY (HZ)', width: 160 },
+    { key: 'l1', field: 'voltage_l1_v', summaryField: 'avg_voltage_l1_v', label: 'AVG VOLTAGE L1 (V)', width: 145 },
+    { key: 'l2', field: 'voltage_l2_v', summaryField: 'avg_voltage_l2_v', label: 'AVG VOLTAGE L2 (V)', width: 145 },
+    { key: 'l3', field: 'voltage_l3_v', summaryField: 'avg_voltage_l3_v', label: 'AVG VOLTAGE L3 (V)', width: 145 },
+    { key: 'amps', field: 'amperage_a', summaryField: 'avg_amperage_a', label: 'AVG AMPERAGE (A)', width: 130 },
+    { key: 'tds', field: 'tds_ppm', summaryField: 'avg_tds_ppm', label: 'AVG TDS (PPM)', width: 120 },
+    { key: 'power', field: 'power_kwh_shift', summaryField: 'power_kwh', label: 'POWER CONSUMPTION (KWH)', width: 190, aggregate: 'sum', summaryAggregate: 'sum' },
   ];
 
   const dailyAverageColumns =
@@ -1211,7 +1211,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
             : filters.fromDate,
       };
 
-      const [nextItems, averagingItems] = await Promise.all([
+      const [nextItems, averagingItems, summaryItems] = await Promise.all([
         shouldLoadRecords
           ? listReadings({
               ...recordsFilters,
@@ -1224,18 +1224,41 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
               limit: averageSourceLimit,
             })
           : Promise.resolve([]),
+        shouldLoadDailyAverages
+          ? listDailySiteSummaries({
+              ...filters,
+              limit: averageSourceLimit,
+            })
+          : Promise.resolve([]),
       ]);
 
-      const averageRows = (
+      const averageFieldConfigs =
+        effectiveTableMode === 'CHLORINATION'
+          ? chlorinationAverageFields
+          : effectiveTableMode === 'DEEPWELL'
+            ? deepwellAverageFields
+            : [];
+      const calculatedAverageRows =
         shouldLoadDailyAverages && effectiveTableMode === 'CHLORINATION'
-          ? aggregateDailyRows(averagingItems, chlorinationAverageFields, {
+          ? aggregateDailyRows(averagingItems, averageFieldConfigs, {
               visibleFromDate: filters.fromDate,
               visibleToDate: filters.toDate,
             })
           : shouldLoadDailyAverages && effectiveTableMode === 'DEEPWELL'
-            ? aggregateDailyRows(averagingItems, deepwellAverageFields)
-            : []
-      ).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+            ? aggregateDailyRows(averagingItems, averageFieldConfigs, {
+                visibleFromDate: filters.fromDate,
+                visibleToDate: filters.toDate,
+              })
+            : [];
+      const summaryAverageRows = shouldLoadDailyAverages
+        ? aggregateDailySummaryRows(summaryItems, averageFieldConfigs, {
+            visibleFromDate: filters.fromDate,
+            visibleToDate: filters.toDate,
+          })
+        : [];
+      const averageRows = mergeDailyRowsWithSummaries(calculatedAverageRows, summaryAverageRows).sort((a, b) =>
+        String(b.date || '').localeCompare(String(a.date || ''))
+      );
 
       setItems(nextItems);
       setDailyAverageRows(averageRows);

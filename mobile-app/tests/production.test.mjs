@@ -14,12 +14,14 @@ try {
 
   const {
     aggregateDailyRows,
+    aggregateDailySummaryRows,
     buildDailyPowerConsumption,
     buildDailyProduction,
     buildDailyTotalizerRows,
     buildMonthlyChemicalUsage,
     buildMonthlyProduction,
     buildMonthlyPowerConsumption,
+    mergeDailyRowsWithSummaries,
     startOfMonthlyProductionSourceIso,
   } = await import(pathToFileURL(tempModulePath).href);
 
@@ -56,6 +58,27 @@ try {
   assert.equal(averageRows[0].totalizer, 80);
   assert.equal(averageRows[1].pressure, 44);
   assert.equal(averageRows[1].totalizer, 50);
+
+  const summaryRows = aggregateDailySummaryRows(
+    [
+      { summary_date: '2026-02-01', production_m3: 75, power_kwh: 10, avg_pressure_psi: 41 },
+      { summary_date: '2026-02-01', production_m3: 25, power_kwh: 5, avg_pressure_psi: 43 },
+    ],
+    [
+      { key: 'pressure', summaryField: 'avg_pressure_psi' },
+      { key: 'totalizer', summaryField: 'production_m3', summaryAggregate: 'sum' },
+      { key: 'power', summaryField: 'power_kwh', summaryAggregate: 'sum' },
+    ]
+  );
+
+  assert.deepEqual(summaryRows, [
+    { id: 'summary:2026-02-01', date: '2026-02-01', source: 'daily_site_summaries', pressure: 42, totalizer: 100, power: 15 },
+  ]);
+
+  assert.deepEqual(mergeDailyRowsWithSummaries(averageRows, summaryRows), [
+    { id: 'summary:2026-02-01', date: '2026-02-01', source: 'daily_site_summaries', pressure: 42, totalizer: 100, power: 15 },
+    { id: 'avg:2026-02-02', date: '2026-02-02', pressure: 44, totalizer: 50 },
+  ]);
 
   const noPreviousRows = buildDailyTotalizerRows(readings.slice(1), {
     visibleFromDate: '2026-02-01',
