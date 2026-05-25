@@ -11,13 +11,21 @@ import { useTheme } from '../context/ThemeContext';
 import { supabase } from '../lib/supabase';
 import { approveOperatorProfile, assignProfileRole, getOfficeDashboardSnapshot } from '../services/office';
 import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
-import { loadNotificationReadKeys, saveNotificationReadKeys, saveNotificationUnreadCount } from '../utils/notificationState';
+import {
+  loadNotificationDismissedKeys,
+  loadNotificationReadKeys,
+  saveNotificationDismissedKeys,
+  saveNotificationReadKeys,
+  saveNotificationUnreadCount,
+} from '../utils/notificationState';
 import { formatTimestamp } from '../utils/time';
 
 let styles = StyleSheet.create({});
 
 const DAY_MINUTES = 24 * 60;
 const HALF_HOUR_MINUTES = 30;
+const NOTIFICATION_PREVIEW_LIMIT = 7;
+const NOTIFICATION_SHOW_MORE_STEP = 5;
 
 function formatSlotClock(minutes) {
   const normalizedMinutes = ((minutes % DAY_MINUTES) + DAY_MINUTES) % DAY_MINUTES;
@@ -718,8 +726,20 @@ function NotificationCenter({
   onChangeFilter,
   onMarkAllRead,
   onPressNotification,
+  onDeleteNotification,
   palette,
 }) {
+  const [visibleNotificationLimit, setVisibleNotificationLimit] = useState(NOTIFICATION_PREVIEW_LIMIT);
+
+  useEffect(() => {
+    setVisibleNotificationLimit(NOTIFICATION_PREVIEW_LIMIT);
+  }, [filter, notifications.length]);
+
+  const visibleNotifications = notifications.slice(0, visibleNotificationLimit);
+  const hiddenNotificationCount = Math.max(notifications.length - visibleNotifications.length, 0);
+  const canShowMoreNotifications = hiddenNotificationCount > 0;
+  const canShowFewerNotifications = visibleNotificationLimit > NOTIFICATION_PREVIEW_LIMIT;
+
   return (
     <View style={styles.notificationCenter}>
       <View style={styles.notificationHero}>
@@ -758,29 +778,63 @@ function NotificationCenter({
       </View>
 
       <View style={styles.notificationMetaRow}>
-        <Text style={styles.notificationMetaText}>{notifications.length} visible</Text>
+        <Text style={styles.notificationMetaText}>{visibleNotifications.length} visible</Text>
         <Text style={styles.notificationMetaText}>{unreadCount} unread</Text>
       </View>
 
       <View style={styles.notificationStack}>
-        {notifications.length ? (
-          notifications.map((item) => (
+        {visibleNotifications.length ? (
+          visibleNotifications.map((item) => (
             <NotificationCard
               key={item.key}
               item={item}
               unread={!readMap[item.key]}
               onPress={onPressNotification}
+              onDelete={onDeleteNotification}
             />
           ))
         ) : (
           <MessageBanner tone="info">No active alerts right now.</MessageBanner>
         )}
+        {canShowMoreNotifications || canShowFewerNotifications ? (
+          <View style={styles.notificationShowMoreRow}>
+            {canShowMoreNotifications ? (
+              <Pressable
+                onPress={() =>
+                  setVisibleNotificationLimit((current) =>
+                    Math.min(current + NOTIFICATION_SHOW_MORE_STEP, notifications.length)
+                  )
+                }
+                style={({ pressed }) => [
+                  styles.notificationShowMoreButton,
+                  pressed && styles.quickActionPressed,
+                ]}
+              >
+                <Text style={styles.notificationShowMoreText}>
+                  Show more ({Math.min(NOTIFICATION_SHOW_MORE_STEP, hiddenNotificationCount)} more)
+                </Text>
+              </Pressable>
+            ) : null}
+            {canShowFewerNotifications ? (
+              <Pressable
+                onPress={() => setVisibleNotificationLimit(NOTIFICATION_PREVIEW_LIMIT)}
+                style={({ pressed }) => [
+                  styles.notificationShowMoreButton,
+                  pressed && styles.quickActionPressed,
+                ]}
+              >
+                <Text style={styles.notificationShowMoreText}>Show fewer</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
       </View>
     </View>
   );
 }
 
-function NotificationCard({ item, unread, onPress }) {
+function NotificationCard({ item, unread, onPress, onDelete }) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const toneStyle = {
     success: styles.notificationCardSuccess,
     warning: styles.notificationCardWarning,
@@ -825,6 +879,38 @@ function NotificationCard({ item, unread, onPress }) {
         </View>
         <Text style={styles.notificationDescription}>{item.description}</Text>
         <Text style={styles.notificationTimestamp}>{formatRelativeTime(item.timestamp)}</Text>
+      </View>
+      <View style={styles.notificationMenuWrap}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`More options for ${item.title}`}
+          onPress={() => setMenuOpen((current) => !current)}
+          style={({ pressed }) => [
+            styles.notificationKebabButton,
+            pressed && styles.quickActionPressed,
+          ]}
+        >
+          <Ionicons name="ellipsis-horizontal" size={17} color="#FFFFFF" />
+        </Pressable>
+        {menuOpen ? (
+          <View style={styles.notificationMenu}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Delete ${item.title} notification`}
+              onPress={() => {
+                setMenuOpen(false);
+                onDelete?.(item);
+              }}
+              style={({ pressed }) => [
+                styles.notificationMenuItem,
+                pressed && styles.quickActionPressed,
+              ]}
+            >
+              <Ionicons name="trash-outline" size={14} color="#FFFFFF" />
+              <Text style={styles.notificationMenuItemText}>Delete</Text>
+            </Pressable>
+          </View>
+        ) : null}
       </View>
     </Pressable>
   );
@@ -1048,6 +1134,7 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
   const [selectedCheckpoint, setSelectedCheckpoint] = useState(null);
   const [notificationFilter, setNotificationFilter] = useState('alerts');
   const [readNotificationKeys, setReadNotificationKeys] = useState({});
+  const [dismissedNotificationKeys, setDismissedNotificationKeys] = useState({});
   const [liveNotifications, setLiveNotifications] = useState([]);
 
   useEffect(() => {
@@ -1057,14 +1144,18 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
   useEffect(() => {
     let mounted = true;
 
-    async function restoreReadNotifications() {
-      const storedReadKeys = await loadNotificationReadKeys(profile);
+    async function restoreNotificationState() {
+      const [storedReadKeys, storedDismissedKeys] = await Promise.all([
+        loadNotificationReadKeys(profile),
+        loadNotificationDismissedKeys(profile),
+      ]);
       if (mounted) {
         setReadNotificationKeys(storedReadKeys);
+        setDismissedNotificationKeys(storedDismissedKeys);
       }
     }
 
-    restoreReadNotifications();
+    restoreNotificationState();
 
     return () => {
       mounted = false;
@@ -1379,8 +1470,10 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
         operationAlerts,
         lastUpdatedAt,
       }),
-    ]).filter((item, index, all) => all.findIndex((candidate) => candidate.key === item.key) === index),
-    [lastUpdatedAt, liveNotifications, operationAlerts]
+    ])
+      .filter((item, index, all) => all.findIndex((candidate) => candidate.key === item.key) === index)
+      .filter((item) => !dismissedNotificationKeys[item.key]),
+    [dismissedNotificationKeys, lastUpdatedAt, liveNotifications, operationAlerts]
   );
   const filteredNotifications = useMemo(
     () =>
@@ -1773,6 +1866,24 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
                 timeLabel: formatMaybeTimestamp(item.reading.slot_datetime || item.reading.reading_datetime),
               },
             });
+          }}
+          onDeleteNotification={(item) => {
+            if (!item?.key) {
+              return;
+            }
+
+            const nextDismissedKeys = {
+              ...dismissedNotificationKeys,
+              [item.key]: true,
+            };
+            const nextReadKeys = {
+              ...readNotificationKeys,
+              [item.key]: true,
+            };
+            setDismissedNotificationKeys(nextDismissedKeys);
+            setReadNotificationKeys(nextReadKeys);
+            saveNotificationDismissedKeys(profile, nextDismissedKeys);
+            saveNotificationReadKeys(profile, nextReadKeys);
           }}
           palette={palette}
         />
@@ -3433,6 +3544,27 @@ function createStyles(palette, isDark, responsiveMetrics) {
   notificationStack: {
     gap: 9,
   },
+  notificationShowMoreRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  notificationShowMoreButton: {
+    flexGrow: 1,
+    minHeight: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: isDark ? '#294C68' : '#BFD4E7',
+    backgroundColor: isDark ? '#0C1824' : '#F8FCFF',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+  },
+  notificationShowMoreText: {
+    color: palette.ink900,
+    fontSize: 11,
+    fontWeight: '900',
+  },
   notificationCard: {
     position: 'relative',
     flexDirection: 'row',
@@ -3466,7 +3598,7 @@ function createStyles(palette, isDark, responsiveMetrics) {
   notificationUnreadDot: {
     position: 'absolute',
     top: 10,
-    right: 10,
+    right: 48,
     width: 8,
     height: 8,
     borderRadius: 999,
@@ -3500,8 +3632,53 @@ function createStyles(palette, isDark, responsiveMetrics) {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingRight: 12,
+    paddingRight: 48,
     minWidth: 0,
+  },
+  notificationMenuWrap: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    zIndex: 10,
+    elevation: 10,
+    alignItems: 'flex-end',
+  },
+  notificationKebabButton: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: isDark ? '#34516C' : '#CAD8E8',
+    backgroundColor: isDark ? '#1F2937' : '#596579',
+    borderRadius: 999,
+  },
+  notificationMenu: {
+    marginTop: 6,
+    minWidth: 118,
+    borderWidth: 1,
+    borderColor: isDark ? '#3A516B' : '#C9D7E8',
+    backgroundColor: isDark ? '#111C2A' : '#1F2937',
+    borderRadius: 10,
+    padding: 4,
+    shadowColor: '#000000',
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 12,
+  },
+  notificationMenuItem: {
+    minHeight: 34,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 9,
+    borderRadius: 8,
+  },
+  notificationMenuItemText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '900',
   },
   notificationTitle: {
     flex: 1,

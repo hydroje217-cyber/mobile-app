@@ -21,15 +21,16 @@ import ScreenShell, { KeyboardScrollContext } from '../components/ScreenShell';
 import { EmptyState, LoadingState, SegmentChip, SplitExportButton } from '../components/UiControls';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { listReadings } from '../services/readings';
+import { listDailySiteSummaries, listReadings } from '../services/readings';
 import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 import { saveNativeExportFile, buildNativeExportSuccessMessage } from '../utils/exportFiles';
-import { aggregateDailyRows } from '../utils/production';
+import { addShiftYieldToRows, aggregateDailyRows } from '../utils/production';
 
 const DEFAULT_HISTORY_LIMIT = 50;
 const MAX_HISTORY_LIMIT = 200;
 const MAX_AVERAGE_SOURCE_LIMIT = 500;
 const EDIT_WINDOW_MS = 5 * 60 * 1000;
+const EDIT_TIMER_BYPASS_ROLES = ['supervisor', 'manager', 'general_manager', 'admin'];
 const SHIFT_OPTIONS = [
   { key: 'all', label: 'All shifts' },
   { key: 'a', label: 'A-Shift' },
@@ -686,6 +687,86 @@ function formatAverageValue(value) {
   return Number(value).toFixed(2);
 }
 
+function firstSummaryValue(summary, ...keys) {
+  return keys
+    .map((key) => summary?.[key])
+    .find((value) => value !== null && value !== undefined && value !== '');
+}
+
+function mapDailySummaryToAverageRow(summary, siteType) {
+  const normalizedSiteType = String(siteType || summary?.site_type || summary?.site?.type || '').toUpperCase();
+  const date = String(summary?.summary_date || '').slice(0, 10);
+
+  if (!date) {
+    return null;
+  }
+
+  if (normalizedSiteType === 'CHLORINATION') {
+    return {
+      id: `summary:${summary.id || `${summary.site_id}:${date}`}`,
+      date,
+      pressure: firstSummaryValue(summary, 'avg_pressure_psi'),
+      rc: firstSummaryValue(summary, 'avg_rc_ppm'),
+      turbidity: firstSummaryValue(summary, 'avg_turbidity_ntu'),
+      ph: firstSummaryValue(summary, 'avg_ph'),
+      tds: firstSummaryValue(summary, 'avg_tds_ppm'),
+      tank: null,
+      flowrate: firstSummaryValue(summary, 'avg_flowrate_m3hr'),
+      totalizer: firstSummaryValue(summary, 'production_m3'),
+      powerConsumption: firstSummaryValue(summary, 'power_kwh'),
+      chlorine: firstSummaryValue(summary, 'chlorine_kg'),
+      peroxide: firstSummaryValue(summary, 'peroxide_liters'),
+    };
+  }
+
+  if (normalizedSiteType === 'DEEPWELL') {
+    return {
+      id: `summary:${summary.id || `${summary.site_id}:${date}`}`,
+      date,
+      upstream: firstSummaryValue(summary, 'avg_upstream_pressure_psi'),
+      downstream: firstSummaryValue(summary, 'avg_downstream_pressure_psi'),
+      flowrate: firstSummaryValue(summary, 'avg_flowrate_m3hr'),
+      frequency: firstSummaryValue(summary, 'avg_vfd_frequency_hz'),
+      l1: firstSummaryValue(summary, 'avg_voltage_l1_v'),
+      l2: firstSummaryValue(summary, 'avg_voltage_l2_v'),
+      l3: firstSummaryValue(summary, 'avg_voltage_l3_v'),
+      amps: firstSummaryValue(summary, 'avg_amperage_a'),
+      tds: firstSummaryValue(summary, 'avg_tds_ppm'),
+      power: firstSummaryValue(summary, 'power_kwh'),
+    };
+  }
+
+  return null;
+}
+
+function mergeSummaryAndLiveAverageRows(summaryRows, liveRows) {
+  const rowsByDate = new Map();
+
+  liveRows.forEach((row) => {
+    if (row?.date) {
+      rowsByDate.set(row.date, row);
+    }
+  });
+
+  summaryRows.forEach((row) => {
+    if (!row?.date) {
+      return;
+    }
+
+    const merged = { ...(rowsByDate.get(row.date) || {}), id: row.id, date: row.date };
+    Object.entries(row).forEach(([key, value]) => {
+      if (value === null || value === undefined || value === '') {
+        return;
+      }
+
+      merged[key] = value;
+    });
+    rowsByDate.set(row.date, merged);
+  });
+
+  return Array.from(rowsByDate.values());
+}
+
 function formatRecordedValue(value, unit) {
   if (value === null || value === undefined || value === '') {
     return '-';
@@ -760,7 +841,7 @@ function formatEditCountdown(remainingMs) {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
-function DataTable({ columns, rows, emptyMessage, onEditReading }) {
+function DataTable({ columns, rows, emptyMessage, onEditReading, canBypassEditTimer = false }) {
   const { palette, isDark } = useTheme();
   const { width } = useWindowDimensions();
   const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
@@ -795,7 +876,12 @@ function DataTable({ columns, rows, emptyMessage, onEditReading }) {
   const summaryRows = getRecordedValueRows(selectedRow);
   const submitter = getReadingOperatorName(selectedRow);
   const editRemainingMs = getEditWindowRemainingMs(selectedRow, timerNow);
-  const canEditSelectedReading = editRemainingMs > 0;
+  const canEditSelectedReading = canBypassEditTimer || editRemainingMs > 0;
+  const editButtonLabel = canBypassEditTimer
+    ? 'Edit'
+    : canEditSelectedReading
+      ? `Edit ${formatEditCountdown(editRemainingMs)}`
+      : 'Edit expired';
 
   return (
     <Card style={styles.tableCard}>
@@ -931,7 +1017,7 @@ function DataTable({ columns, rows, emptyMessage, onEditReading }) {
                 >
                   <Ionicons name="create-outline" size={15} color={canEditSelectedReading ? palette.onAccent : palette.ink500} />
                   <Text style={[styles.readingSummaryEditText, !canEditSelectedReading && styles.readingSummaryEditTextDisabled]}>
-                    {canEditSelectedReading ? `Edit ${formatEditCountdown(editRemainingMs)}` : 'Edit expired'}
+                    {editButtonLabel}
                   </Text>
                 </Pressable>
               </View>
@@ -1024,6 +1110,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
   const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
   const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
   const isOfficeView = source === 'office-dashboard';
+  const canBypassEditTimer = EDIT_TIMER_BYPASS_ROLES.includes(profile?.role);
   const isCompactFilters = width < 430;
   const useTabletFilterRow = isOfficeView && responsiveMetrics.isTablet;
   const useMobileFilterPanel = !responsiveMetrics.isTablet;
@@ -1062,6 +1149,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     { key: 'flowrate', label: 'Flowrate', width: 95, render: (row) => row.flowrate_m3hr },
     { key: 'totalizer', label: 'Totalizer', width: 95, render: (row) => row.totalizer },
     { key: 'powerConsumption', label: 'Power kWh', width: 105, render: (row) => row.chlorination_power_kwh },
+    { key: 'powerYield', label: 'Power Consumed kWh', width: 155, render: (row) => formatAverageValue(row.power_yield_kwh) },
     { key: 'chlorine', label: 'Chlorine Used', width: 115, render: (row) => row.chlorine_consumed },
     { key: 'peroxide', label: 'Peroxide Consumption', width: 155, render: (row) => row.peroxide_consumption },
     { key: 'recordedAt', label: 'Recorded At', width: 135, render: (row) => formatShortDateTime(row.reading_datetime) },
@@ -1083,6 +1171,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     { key: 'amps', label: 'Amperage', width: 95, render: (row) => row.amperage_a },
     { key: 'tds', label: 'TDS', width: 80, render: (row) => row.tds_ppm },
     { key: 'power', label: 'Power kWh', width: 100, render: (row) => row.power_kwh_shift },
+    { key: 'powerYield', label: 'Power Consumed kWh', width: 155, render: (row) => formatAverageValue(row.power_yield_kwh) },
     { key: 'recordedAt', label: 'Recorded At', width: 135, render: (row) => formatShortDateTime(row.reading_datetime) },
     { key: 'recordedBy', label: 'Recorded By', width: 140, render: (row) => row.submitted_profile?.full_name || row.submitted_profile?.email || '-' },
     { key: 'remarks', label: 'Remarks', width: 160, render: (row) => row.remarks || row.status || '-' },
@@ -1108,7 +1197,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     { key: 'tank', field: 'tank_level_liters', label: 'AVG TANK LEVEL (L)', width: 145 },
     { key: 'flowrate', field: 'flowrate_m3hr', label: 'AVG FLOWRATE (M3/HR)', width: 150 },
     { key: 'totalizer', field: 'totalizer', label: 'TOTALIZER', width: 120, aggregate: 'previousDayDifference' },
-    { key: 'powerConsumption', field: 'chlorination_power_kwh', label: 'POWER CONSUMPTION (KWH)', width: 190, aggregate: 'sameDayDifference' },
+    { key: 'powerConsumption', field: 'chlorination_power_kwh', label: 'POWER CONSUMPTION (KWH)', width: 190, aggregate: 'shiftYieldTotal' },
     { key: 'chlorine', field: 'chlorine_consumed', label: 'AVG CHLORINE USED (KG)', width: 165 },
     { key: 'peroxide', field: 'peroxide_consumption', label: 'AVG PEROXIDE CONSUMPTION', width: 190 },
   ];
@@ -1123,7 +1212,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     { key: 'l3', field: 'voltage_l3_v', label: 'AVG VOLTAGE L3 (V)', width: 145 },
     { key: 'amps', field: 'amperage_a', label: 'AVG AMPERAGE (A)', width: 130 },
     { key: 'tds', field: 'tds_ppm', label: 'AVG TDS (PPM)', width: 120 },
-    { key: 'power', field: 'power_kwh_shift', label: 'POWER CONSUMPTION (KWH)', width: 190, aggregate: 'sameDayDifference' },
+    { key: 'power', field: 'power_kwh_shift', label: 'POWER CONSUMPTION (KWH)', width: 190, aggregate: 'shiftYieldTotal' },
   ];
 
   const dailyAverageColumns =
@@ -1176,7 +1265,6 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     const effectiveToDate = nextFilters?.toDate ?? toDate;
     const effectiveLimit = nextFilters?.limit ?? limit;
     const safeLimit = Math.min(MAX_HISTORY_LIMIT, Math.max(1, Number(effectiveLimit) || DEFAULT_HISTORY_LIMIT));
-    const averageSourceLimit = Math.min(MAX_AVERAGE_SOURCE_LIMIT, Math.max(safeLimit, DEFAULT_HISTORY_LIMIT));
     const canLoadDailyAverages = supportsDailyAverageMode(effectiveTableMode);
     const shouldLoadDailyAverages = canLoadDailyAverages && effectiveHistoryView === 'average';
     const shouldLoadRecords = effectiveHistoryView === 'records' || !canLoadDailyAverages;
@@ -1203,15 +1291,28 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
         fromDate: siteDefaultRange?.fromDate || filters.fromDate,
         toDate: siteDefaultRange?.toDate || filters.toDate,
       };
+      const recordYieldFilters = {
+        ...recordsFilters,
+        fromDate:
+          canLoadDailyAverages && recordsFilters.fromDate
+            ? shiftDateValue(recordsFilters.fromDate, -1)
+            : recordsFilters.fromDate,
+      };
       const averagingFilters = {
         ...filters,
         fromDate:
-          effectiveTableMode === 'CHLORINATION' && filters.fromDate
+          canLoadDailyAverages && filters.fromDate
             ? shiftDateValue(filters.fromDate, -1)
             : filters.fromDate,
       };
 
-      const [nextItems, averagingItems] = await Promise.all([
+      const summaryFilters = {
+        ...filters,
+        fromDate: filters.fromDate,
+        toDate: filters.toDate,
+      };
+
+      const [nextItems, averagingItems, recordYieldItems, dailySummaries] = await Promise.all([
         shouldLoadRecords
           ? listReadings({
               ...recordsFilters,
@@ -1221,23 +1322,59 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
         shouldLoadDailyAverages
           ? listReadings({
               ...averagingFilters,
-              limit: averageSourceLimit,
+              includeAll: true,
+            })
+          : Promise.resolve([]),
+        shouldLoadRecords && canLoadDailyAverages
+          ? listReadings({
+              ...recordYieldFilters,
+              limit: Math.min(MAX_AVERAGE_SOURCE_LIMIT, Math.max(safeLimit, DEFAULT_HISTORY_LIMIT)),
+            })
+          : Promise.resolve([]),
+        shouldLoadDailyAverages
+          ? listDailySiteSummaries({
+              ...summaryFilters,
+              includeAll: true,
             })
           : Promise.resolve([]),
       ]);
+      const computedRecordItems =
+        shouldLoadRecords && effectiveTableMode === 'CHLORINATION'
+          ? addShiftYieldToRows(recordYieldItems, 'chlorination_power_kwh', 'power_yield_kwh')
+          : shouldLoadRecords && effectiveTableMode === 'DEEPWELL'
+            ? addShiftYieldToRows(recordYieldItems, 'power_kwh_shift', 'power_yield_kwh')
+            : nextItems;
+      const computedRecordMap = new Map(computedRecordItems.map((item) => [item.id, item]));
+      const itemsWithComputedValues = nextItems.map((item) => computedRecordMap.get(item.id) || item);
 
-      const averageRows = (
+      const liveAverageRows = (
         shouldLoadDailyAverages && effectiveTableMode === 'CHLORINATION'
           ? aggregateDailyRows(averagingItems, chlorinationAverageFields, {
               visibleFromDate: filters.fromDate,
               visibleToDate: filters.toDate,
             })
           : shouldLoadDailyAverages && effectiveTableMode === 'DEEPWELL'
-            ? aggregateDailyRows(averagingItems, deepwellAverageFields)
+            ? aggregateDailyRows(averagingItems, deepwellAverageFields, {
+                visibleFromDate: filters.fromDate,
+                visibleToDate: filters.toDate,
+              })
             : []
-      ).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+      );
+      const summaryAverageRows = shouldLoadDailyAverages
+        ? dailySummaries
+            .map((summary) => mapDailySummaryToAverageRow(summary, effectiveTableMode))
+            .filter(Boolean)
+        : [];
+      const combinedAverageRows =
+        effectiveTableMode === 'DEEPWELL'
+          ? mergeSummaryAndLiveAverageRows(summaryAverageRows, liveAverageRows)
+          : summaryAverageRows.length
+            ? summaryAverageRows
+            : liveAverageRows;
+      const averageRows = combinedAverageRows
+        .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
 
-      setItems(nextItems);
+      setItems(itemsWithComputedValues);
       setDailyAverageRows(averageRows);
       setMessageTone('success');
       setLastUpdatedAt(new Date());
@@ -1846,7 +1983,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
                   <Text style={styles.averageIntroTitle}>Daily average values</Text>
                 </View>
                 <Text style={styles.averageIntroBody}>
-                  Averages are calculated per day from the loaded records to keep history fast with large datasets. Increase the limit or narrow the date range for a wider sample.
+                  Averages are calculated per day from the loaded records. Power totals use shift yield differences, while other values are averaged.
                 </Text>
               </Card>
 
@@ -1903,6 +2040,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
                     : 'No records were found for this site in the selected date range.'
                 }
                 onEditReading={handleEditReading}
+                canBypassEditTimer={canBypassEditTimer}
               />
             </>
           ) : null}

@@ -13,6 +13,7 @@ try {
   await writeFile(tempModulePath, await readFile(sourcePath, 'utf8'));
 
   const {
+    addShiftYieldToRows,
     aggregateDailyRows,
     buildDailyPowerConsumption,
     buildDailyProduction,
@@ -59,6 +60,57 @@ try {
   assert.equal(averageRows[1].pressure, 44);
   assert.equal(averageRows[1].totalizer, 50);
   assert.equal(averageRows[1].power, null);
+
+  const shiftYieldRows = aggregateDailyRows(
+    [
+      { site_id: 1, slot_datetime: '2026-01-31T22:30:00', power_kwh: 100 },
+      { site_id: 1, slot_datetime: '2026-02-01T06:30:00', power_kwh: 130 },
+      { site_id: 1, slot_datetime: '2026-02-01T14:30:00', power_kwh: 180 },
+      { site_id: 1, slot_datetime: '2026-02-01T22:30:00', power_kwh: 250 },
+      { site_id: 2, slot_datetime: '2026-01-31T22:30:00', power_kwh: 500 },
+      { site_id: 2, slot_datetime: '2026-02-01T06:30:00', power_kwh: 540 },
+      { site_id: 2, slot_datetime: '2026-02-01T14:30:00', power_kwh: 620 },
+      { site_id: 2, slot_datetime: '2026-02-01T22:30:00', power_kwh: 700 },
+    ],
+    [
+      { key: 'powerTotal', field: 'power_kwh', aggregate: 'shiftYieldTotal' },
+      { key: 'powerC', field: 'power_kwh', aggregate: 'shiftYield', shift: 'c' },
+      { key: 'powerA', field: 'power_kwh', aggregate: 'shiftYield', shift: 'a' },
+      { key: 'powerB', field: 'power_kwh', aggregate: 'shiftYield', shift: 'b' },
+    ],
+    {
+      visibleFromDate: '2026-02-01',
+      visibleToDate: '2026-02-01',
+    }
+  );
+
+  assert.deepEqual(
+    shiftYieldRows.map((row) => [row.date, row.powerC, row.powerA, row.powerB, row.powerTotal]),
+    [['2026-02-01', 70, 130, 150, 350]]
+  );
+
+  const readingsWithShiftYields = addShiftYieldToRows(
+    [
+      { id: 'prev-b', site_id: 1, slot_datetime: '2026-01-31T22:30:00', power_kwh: 100 },
+      { id: 'c-end', site_id: 1, slot_datetime: '2026-02-01T06:30:00', power_kwh: 130 },
+      { id: 'a-mid', site_id: 1, slot_datetime: '2026-02-01T10:30:00', power_kwh: 150 },
+      { id: 'a-end', site_id: 1, slot_datetime: '2026-02-01T14:30:00', power_kwh: 180 },
+      { id: 'b-end', site_id: 1, slot_datetime: '2026-02-01T22:30:00', power_kwh: 250 },
+    ],
+    'power_kwh',
+    'power_yield'
+  );
+
+  assert.deepEqual(
+    readingsWithShiftYields.map((row) => [row.id, row.power_yield]),
+    [
+      ['prev-b', null],
+      ['c-end', 30],
+      ['a-mid', null],
+      ['a-end', 50],
+      ['b-end', 70],
+    ]
+  );
 
   const noPreviousRows = buildDailyTotalizerRows(readings.slice(1), {
     visibleFromDate: '2026-02-01',
@@ -118,13 +170,22 @@ try {
   const powerConsumption = buildMonthlyPowerConsumption(
     {
       chlorinationReadings: [
-        { slot_datetime: '2026-02-01T23:30:00.000Z', chlorination_power_kwh: 40 },
-        { slot_datetime: '2026-02-02T23:30:00.000Z', chlorination_power_kwh: 60 },
+        { slot_datetime: '2026-01-31T22:30:00', chlorination_power_kwh: 100 },
+        { slot_datetime: '2026-02-01T06:30:00', chlorination_power_kwh: 130 },
+        { slot_datetime: '2026-02-01T14:30:00', chlorination_power_kwh: 180 },
+        { slot_datetime: '2026-02-01T22:30:00', chlorination_power_kwh: 250 },
+        { slot_datetime: '2026-02-02T06:30:00', chlorination_power_kwh: 280 },
+        { slot_datetime: '2026-02-02T14:30:00', chlorination_power_kwh: 330 },
+        { slot_datetime: '2026-02-02T22:30:00', chlorination_power_kwh: 380 },
       ],
       deepwellReadings: [
-        { slot_datetime: '2026-02-01T08:00:00.000Z', power_kwh_shift: 50 },
-        { slot_datetime: '2026-02-01T18:00:00.000Z', power_kwh_shift: 50 },
-        { slot_datetime: '2026-02-02T18:00:00.000Z', power_kwh_shift: 150 },
+        { slot_datetime: '2026-01-31T22:30:00', power_kwh_shift: 500 },
+        { slot_datetime: '2026-02-01T06:30:00', power_kwh_shift: 540 },
+        { slot_datetime: '2026-02-01T14:30:00', power_kwh_shift: 620 },
+        { slot_datetime: '2026-02-01T22:30:00', power_kwh_shift: 700 },
+        { slot_datetime: '2026-02-02T06:30:00', power_kwh_shift: 760 },
+        { slot_datetime: '2026-02-02T14:30:00', power_kwh_shift: 810 },
+        { slot_datetime: '2026-02-02T22:30:00', power_kwh_shift: 850 },
       ],
     },
     {
@@ -137,10 +198,10 @@ try {
     powerConsumption.rows.map((row) => row.key),
     ['2026-02', '2026-01']
   );
-  assert.equal(powerConsumption.rows[0].chlorinationPower, 100);
-  assert.equal(powerConsumption.rows[0].deepwellPower, 250);
-  assert.equal(powerConsumption.rows[0].totalPower, 350);
-  assert.equal(powerConsumption.totalPower, 350);
+  assert.equal(powerConsumption.rows[0].chlorinationPower, 280);
+  assert.equal(powerConsumption.rows[0].deepwellPower, 350);
+  assert.equal(powerConsumption.rows[0].totalPower, 630);
+  assert.equal(powerConsumption.totalPower, 630);
 
   const chemicalUsage = buildMonthlyChemicalUsage(
     [
@@ -214,9 +275,17 @@ try {
   const monthlyPowerWithSummaries = buildMonthlyPowerConsumption(
     {
       chlorinationReadings: [
-        { slot_datetime: '2026-02-01T23:30:00.000Z', chlorination_power_kwh: 40 },
+        { slot_datetime: '2026-01-31T22:30:00', chlorination_power_kwh: 100 },
+        { slot_datetime: '2026-02-01T06:30:00', chlorination_power_kwh: 110 },
+        { slot_datetime: '2026-02-01T14:30:00', chlorination_power_kwh: 125 },
+        { slot_datetime: '2026-02-01T22:30:00', chlorination_power_kwh: 140 },
       ],
-      deepwellReadings: [],
+      deepwellReadings: [
+        { slot_datetime: '2026-01-31T22:30:00', power_kwh_shift: 500 },
+        { slot_datetime: '2026-02-01T06:30:00', power_kwh_shift: 510 },
+        { slot_datetime: '2026-02-01T14:30:00', power_kwh_shift: 525 },
+        { slot_datetime: '2026-02-01T22:30:00', power_kwh_shift: 540 },
+      ],
     },
     {
       now: new Date('2026-02-28T12:00:00.000Z'),
@@ -225,9 +294,9 @@ try {
     }
   );
 
-  assert.equal(monthlyPowerWithSummaries.rows[0].chlorinationPower, 120);
-  assert.equal(monthlyPowerWithSummaries.rows[0].deepwellPower, 125);
-  assert.equal(monthlyPowerWithSummaries.totalPower, 245);
+  assert.equal(monthlyPowerWithSummaries.rows[0].chlorinationPower, 150);
+  assert.equal(monthlyPowerWithSummaries.rows[0].deepwellPower, 165);
+  assert.equal(monthlyPowerWithSummaries.totalPower, 315);
 
   const dailyPowerWithSummaries = buildDailyPowerConsumption(
     {

@@ -31,6 +31,7 @@ import { formatTimestamp, roundDownTo30MinSlot } from '../utils/time';
 import LottieView from 'lottie-react-native';
 
 const EDIT_WINDOW_MS = 5 * 60 * 1000;
+const EDIT_TIMER_BYPASS_ROLES = ['supervisor', 'manager', 'general_manager', 'admin'];
 
 const CHLORINATION_BASE_FIELDS = [
   'pressure',
@@ -194,6 +195,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
   const [editNow, setEditNow] = useState(() => new Date());
 
   const isEditingReading = Boolean(editingReading?.id);
+  const canBypassEditTimer = EDIT_TIMER_BYPASS_ROLES.includes(profile?.role);
   const siteHasGeofence = GEOFENCING_ENABLED && Boolean(getSiteCoordinates(site));
   const geofenceBlocked = Boolean(siteHasGeofence && geofenceStatus && !geofenceStatus.allowed);
   const zoneState = locationChecking
@@ -232,7 +234,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
     return Number.isNaN(parsed.getTime()) ? null : parsed;
   }, [editingReading?.slot_datetime]);
   const formSlot = isEditingReading && editingSlotDate ? editingSlotDate : currentSlot;
-  const editWindowOpen = !isEditingReading || isReadingEditWindowOpen(editingReading, editNow);
+  const editWindowOpen = !isEditingReading || canBypassEditTimer || isReadingEditWindowOpen(editingReading, editNow);
   const isChlorination = site?.type === 'CHLORINATION';
   const isDeepwell = site?.type === 'DEEPWELL';
   const parameterCount = isChlorination ? 11 : isDeepwell ? 10 : 0;
@@ -279,7 +281,9 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
         setResultTone(editWindowOpen ? 'info' : 'error');
         setResultMessage(
           editWindowOpen
-            ? `Editing saved reading for slot ${formatTimestamp(editingSlotDate)}.`
+            ? canBypassEditTimer
+              ? `Editing saved reading for slot ${formatTimestamp(editingSlotDate)}. Edit timer is disabled for your role.`
+              : `Editing saved reading for slot ${formatTimestamp(editingSlotDate)}.`
             : 'This reading is past the 5-minute edit window, so editing is locked.'
         );
         setDraftReady(true);
@@ -308,7 +312,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
     return () => {
       mounted = false;
     };
-  }, [editWindowOpen, editingReading, editingSlotDate, isEditingReading, site?.id, site?.type]);
+  }, [canBypassEditTimer, editWindowOpen, editingReading, editingSlotDate, isEditingReading, site?.id, site?.type]);
 
   useEffect(() => {
     if (isEditingReading || !draftReady || !site?.id || !site?.type) {

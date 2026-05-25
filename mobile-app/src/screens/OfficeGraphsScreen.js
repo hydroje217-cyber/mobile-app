@@ -738,7 +738,7 @@ function MonthlyPowerConsumptionCard({
   const chartViewportWidth = Math.min(rawViewportWidth, Math.max(280, baseContentWidth - 120));
   const chartMaxValue = maxPower <= 0 ? 1 : Math.ceil(maxPower * 1.22);
   const hasData = rows.some((row) => row.totalPower > 0);
-  const segmentValueFontSize = zoomLevel >= 1.35 ? 8 : 7;
+  const minVisibleChlorinationPower = chartMaxValue * 0.018;
   const totalLabelWidth = Math.round(Math.max(56, Math.min(82, barWidth + 34)));
   const totalValueFontSize = zoomLevel >= 1.35 ? 9 : 8;
   const totalLabelContainerStyle = {
@@ -756,32 +756,15 @@ function MonthlyPowerConsumptionCard({
         </Text>
       </View>
     ) : null;
-  const renderStackValue = (value, textColor) =>
-    value > 0 ? (
-      <View style={styles.stackValueWrap}>
-        <Text
-          numberOfLines={1}
-          adjustsFontSizeToFit
-          style={[
-            styles.stackValueText,
-            {
-              color: textColor,
-              fontSize: segmentValueFontSize,
-              textShadowColor: textColor === '#FFFFFF' ? 'rgba(0,0,0,0.28)' : 'rgba(255,255,255,0.42)',
-            },
-          ]}
-        >
-          {formatNumber(value, 2)}
-        </Text>
-      </View>
-    ) : null;
-  const createPowerStack = ({ value, color, textColor, isBottom, isTop }) => ({
+  const createPowerStack = ({ value, color, isBottom, isTop, accent }) => ({
     value,
     color,
     borderBottomLeftRadius: isBottom ? 5 : 0,
     borderBottomRightRadius: isBottom ? 5 : 0,
     borderTopLeftRadius: isTop ? 5 : 0,
     borderTopRightRadius: isTop ? 5 : 0,
+    borderWidth: accent ? 1 : 0,
+    borderColor: accent ? (isDark ? '#D8FFFA' : '#063D45') : undefined,
   });
   useEffect(() => {
     setSelectedBar(null);
@@ -790,9 +773,11 @@ function MonthlyPowerConsumptionCard({
     const chlorinationPower = Math.max(0, row.chlorinationPower || 0);
     const deepwellPower = Math.max(0, row.deepwellPower || 0);
     const totalMonthPower = Math.max(0, row.totalPower || chlorinationPower + deepwellPower);
+    const visibleChlorinationPower =
+      chlorinationPower > 0 ? Math.max(chlorinationPower, minVisibleChlorinationPower) : 0;
     const powerStacks = [
-      { key: 'deepwell', value: deepwellPower, color: deepwellPowerColor, textColor: '#11233B' },
-      { key: 'chlorination', value: chlorinationPower, color: chlorinationPowerColor, textColor: '#FFFFFF' },
+      { key: 'deepwell', value: deepwellPower, color: deepwellPowerColor },
+      { key: 'chlorination', value: visibleChlorinationPower, color: chlorinationPowerColor, accent: chlorinationPower > 0 },
     ];
 
     return {
