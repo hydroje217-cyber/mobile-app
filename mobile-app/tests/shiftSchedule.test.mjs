@@ -21,7 +21,7 @@ try {
   } = await import(pathToFileURL(tempModulePath).href);
 
   assert.equal(minutesSinceMidnight(new Date(2026, 0, 1, 15, 0)), 900);
-  assert.equal(formatShiftBatchSlots(), '6:00 AM - 6:59 AM, 2:00 PM - 2:59 PM, 11:00 PM - 11:59 PM');
+  assert.equal(formatShiftBatchSlots(), '6:00 AM - 6:59 AM, 2:00 PM - 2:59 PM, 10:00 PM - 10:59 PM');
 
   assert.equal(isShiftBatchEntryWindow(new Date(2026, 0, 1, 6, 0)), true);
   assert.equal(isShiftBatchEntryWindow(new Date(2026, 0, 1, 6, 30)), true);
@@ -29,16 +29,16 @@ try {
   assert.equal(isShiftBatchEntryWindow(new Date(2026, 0, 1, 14, 0)), true);
   assert.equal(isShiftBatchEntryWindow(new Date(2026, 0, 1, 14, 30)), true);
   assert.equal(isShiftBatchEntryWindow(new Date(2026, 0, 1, 14, 59)), true);
-  assert.equal(isShiftBatchEntryWindow(new Date(2026, 0, 1, 23, 0)), true);
-  assert.equal(isShiftBatchEntryWindow(new Date(2026, 0, 1, 23, 30)), true);
-  assert.equal(isShiftBatchEntryWindow(new Date(2026, 0, 1, 23, 59)), true);
+  assert.equal(isShiftBatchEntryWindow(new Date(2026, 0, 1, 22, 0)), true);
+  assert.equal(isShiftBatchEntryWindow(new Date(2026, 0, 1, 22, 30)), true);
+  assert.equal(isShiftBatchEntryWindow(new Date(2026, 0, 1, 22, 59)), true);
 
   assert.equal(isShiftBatchEntryWindow(new Date(2026, 0, 1, 0, 0)), false);
   assert.equal(isShiftBatchEntryWindow(new Date(2026, 0, 1, 5, 30)), false);
   assert.equal(isShiftBatchEntryWindow(new Date(2026, 0, 1, 7, 0)), false);
   assert.equal(isShiftBatchEntryWindow(new Date(2026, 0, 1, 13, 30)), false);
   assert.equal(isShiftBatchEntryWindow(new Date(2026, 0, 1, 15, 0)), false);
-  assert.equal(isShiftBatchEntryWindow(new Date(2026, 0, 1, 22, 30)), false);
+  assert.equal(isShiftBatchEntryWindow(new Date(2026, 0, 1, 23, 0)), false);
 
   assert.equal(
     nextShiftBatchEntryText(new Date(2026, 0, 1, 7, 0)),
@@ -46,7 +46,11 @@ try {
   );
   assert.equal(
     nextShiftBatchEntryText(new Date(2026, 0, 1, 15, 0)),
-    'Available 11:00 PM - 11:59 PM'
+    'Available 10:00 PM - 10:59 PM'
+  );
+  assert.equal(
+    nextShiftBatchEntryText(new Date(2026, 0, 1, 23, 0)),
+    'Available 6:00 AM - 6:59 AM'
   );
   assert.equal(shiftNameForSlot(new Date(2026, 0, 1, 7, 0)), 'A-Shift');
   assert.equal(shiftNameForSlot(new Date(2026, 0, 1, 15, 0)), 'B-Shift');

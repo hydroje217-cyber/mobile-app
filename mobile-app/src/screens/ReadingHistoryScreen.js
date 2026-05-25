@@ -398,7 +398,7 @@ function buildChlorinationLogsheet({ dateKey, siteName, rows }) {
   [
     ['A-Shift', '(0700H)', 'a'],
     ['B-Shift', '(1500H)', 'b'],
-    ['C-Shift', '(2400H)', 'c'],
+    ['C-Shift', '(2300H)', 'c'],
   ].forEach(([label, time, shiftKey]) => {
     const latestRow = getLatestShiftRow(rows, shiftKey);
     aoa.push([
@@ -492,7 +492,7 @@ function buildDeepwellLogsheet({ dateKey, siteName, rows }) {
   [
     ['A-Shift', '(0700H)', 'a'],
     ['B-Shift', '(1500H)', 'b'],
-    ['C-Shift', '(2400H)', 'c'],
+    ['C-Shift', '(2300H)', 'c'],
   ].forEach(([label, time, shiftKey]) => {
     const latestRow = getLatestShiftRow(rows, shiftKey);
     aoa.push([
@@ -1108,7 +1108,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     { key: 'tank', field: 'tank_level_liters', label: 'AVG TANK LEVEL (L)', width: 145 },
     { key: 'flowrate', field: 'flowrate_m3hr', label: 'AVG FLOWRATE (M3/HR)', width: 150 },
     { key: 'totalizer', field: 'totalizer', label: 'TOTALIZER', width: 120, aggregate: 'previousDayDifference' },
-    { key: 'powerConsumption', field: 'chlorination_power_kwh', label: 'POWER CONSUMPTION (KWH)', width: 190, aggregate: 'previousDayDifference' },
+    { key: 'powerConsumption', field: 'chlorination_power_kwh', label: 'POWER CONSUMPTION (KWH)', width: 190, aggregate: 'sameDayDifference' },
     { key: 'chlorine', field: 'chlorine_consumed', label: 'AVG CHLORINE USED (KG)', width: 165 },
     { key: 'peroxide', field: 'peroxide_consumption', label: 'AVG PEROXIDE CONSUMPTION', width: 190 },
   ];
@@ -1123,7 +1123,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     { key: 'l3', field: 'voltage_l3_v', label: 'AVG VOLTAGE L3 (V)', width: 145 },
     { key: 'amps', field: 'amperage_a', label: 'AVG AMPERAGE (A)', width: 130 },
     { key: 'tds', field: 'tds_ppm', label: 'AVG TDS (PPM)', width: 120 },
-    { key: 'power', field: 'power_kwh_shift', label: 'POWER CONSUMPTION (KWH)', width: 190, aggregate: 'previousDayDifference' },
+    { key: 'power', field: 'power_kwh_shift', label: 'POWER CONSUMPTION (KWH)', width: 190, aggregate: 'sameDayDifference' },
   ];
 
   const dailyAverageColumns =

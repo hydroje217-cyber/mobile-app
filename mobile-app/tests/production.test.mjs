@@ -45,6 +45,7 @@ try {
     [
       { key: 'pressure', field: 'pressure_psi' },
       { key: 'totalizer', field: 'totalizer', aggregate: 'previousDayDifference' },
+      { key: 'power', field: 'pressure_psi', aggregate: 'sameDayDifference' },
     ],
     {
       visibleFromDate: '2026-02-01',
@@ -54,8 +55,10 @@ try {
 
   assert.equal(averageRows[0].pressure, 44);
   assert.equal(averageRows[0].totalizer, 80);
+  assert.equal(averageRows[0].power, 4);
   assert.equal(averageRows[1].pressure, 44);
   assert.equal(averageRows[1].totalizer, 50);
+  assert.equal(averageRows[1].power, null);
 
   const noPreviousRows = buildDailyTotalizerRows(readings.slice(1), {
     visibleFromDate: '2026-02-01',

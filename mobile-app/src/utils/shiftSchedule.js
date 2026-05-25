@@ -1,7 +1,7 @@
 const SHIFT_BATCH_SLOT_MINUTES = [
-  0, // 2400H / midnight
   7 * 60, // 0700H
   15 * 60, // 1500H
+  23 * 60, // 2300H
 ];
 
 const DAY_MINUTES = 24 * 60;
@@ -37,7 +37,7 @@ export function formatShiftBatchWindowTime(minutes) {
 
 export function nextShiftBatchSlotMinutes(input) {
   const currentMinutes = minutesSinceMidnight(input);
-  return SHIFT_BATCH_SLOT_MINUTES.find((minutes) => minutes > currentMinutes) ?? DAY_MINUTES;
+  return SHIFT_BATCH_SLOT_MINUTES.find((minutes) => minutes > currentMinutes) ?? DAY_MINUTES + SHIFT_BATCH_SLOT_MINUTES[0];
 }
 
 export function isShiftBatchEntryWindow(input) {
@@ -99,5 +99,5 @@ export function nextShiftBatchEntryWindow24hText(input) {
 }
 
 export function formatShiftBatchSlots() {
-  return '6:00 AM - 6:59 AM, 2:00 PM - 2:59 PM, 11:00 PM - 11:59 PM';
+  return '6:00 AM - 6:59 AM, 2:00 PM - 2:59 PM, 10:00 PM - 10:59 PM';
 }

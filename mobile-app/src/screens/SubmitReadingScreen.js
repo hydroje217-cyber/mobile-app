@@ -20,6 +20,7 @@ import {
   buildGpsPayload,
   evaluateSiteGeofence,
   formatDistanceMeters,
+  GEOFENCING_ENABLED,
   getSiteCoordinates,
   requestCurrentLocation,
 } from '../utils/geofence';
@@ -193,7 +194,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
   const [editNow, setEditNow] = useState(() => new Date());
 
   const isEditingReading = Boolean(editingReading?.id);
-  const siteHasGeofence = Boolean(getSiteCoordinates(site));
+  const siteHasGeofence = GEOFENCING_ENABLED && Boolean(getSiteCoordinates(site));
   const geofenceBlocked = Boolean(siteHasGeofence && geofenceStatus && !geofenceStatus.allowed);
   const zoneState = locationChecking
     ? 'checking'
@@ -212,7 +213,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
     accuracy: 'Low GPS accuracy',
     checking: 'Checking GPS',
     pending: 'Not checked yet',
-    inactive: 'No GPS fence',
+    inactive: GEOFENCING_ENABLED ? 'No GPS fence' : 'GPS disabled',
   }[zoneState];
   const zoneIcon = {
     inside: 'checkmark-circle',
@@ -897,7 +898,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
         return;
       }
 
-      if (siteHasGeofence) {
+      if (GEOFENCING_ENABLED && siteHasGeofence) {
         setLocationChecking(true);
         const location = await requestCurrentLocation();
         const nextGeofenceStatus = evaluateSiteGeofence(site, location);
@@ -1162,7 +1163,9 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 </View>
               </View>
               <Text style={styles.geofenceBody}>
-                {siteHasGeofence
+                {!GEOFENCING_ENABLED
+                  ? 'GPS submit guard is temporarily disabled. Readings can be saved without a location check.'
+                  : siteHasGeofence
                   ? geofenceStatus
                     ? `${formatDistanceMeters(geofenceStatus.distanceM)} from site; radius ${formatDistanceMeters(
                         geofenceStatus.radiusM
