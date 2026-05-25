@@ -132,6 +132,15 @@ function getClientInfo() {
   return { browser, device, userAgent };
 }
 
+function isMissingFunctionError(error) {
+  return (
+    error?.code === '42883' ||
+    error?.code === 'PGRST202' ||
+    /function .* does not exist/i.test(error?.message || '') ||
+    /could not find .* function/i.test(error?.message || '')
+  );
+}
+
 async function updateLastSeen(userId) {
   if (!supabase || !userId) {
     return;
@@ -197,17 +206,20 @@ async function clearStoredAuthSession() {
 async function insertLoginLogWithFallback(loginLog) {
   const attempts = [
     loginLog,
-    (({ user_id: _userId, ...rest }) => rest)(loginLog),
-    (({ user_id: _userId, browser: _browser, device: _device, ...rest }) => rest)(loginLog),
     {
+      user_id: loginLog.user_id,
       email: loginLog.email,
       role: loginLog.role,
+      browser: loginLog.browser,
+      device: loginLog.device,
       user_agent: loginLog.user_agent,
     },
     {
+      user_id: loginLog.user_id,
       email: loginLog.email,
       role: loginLog.role,
     },
+    (({ user_id: _userId, profile_id: _profileId, ...rest }) => rest)(loginLog),
   ];
   let lastError = null;
 
@@ -234,13 +246,28 @@ async function recordSuccessfulLogin(user, profile) {
   }
 
   const clientInfo = getClientInfo();
+  const rpcResult = await supabase.rpc('record_account_login', {
+    login_user_agent: clientInfo.userAgent || null,
+  });
+
+  if (!rpcResult.error) {
+    return;
+  }
+
+  if (!isMissingFunctionError(rpcResult.error)) {
+    throw rpcResult.error;
+  }
+
   const loginLog = {
     user_id: user.id,
+    profile_id: user.id,
     email: profile?.email || user.email,
+    full_name: profile?.full_name || user.user_metadata?.full_name || null,
     role: profile?.role || 'operator',
     browser: clientInfo.browser,
     device: clientInfo.device,
     user_agent: clientInfo.userAgent,
+    logged_in_at: new Date().toISOString(),
   };
   await insertLoginLogWithFallback(loginLog);
 }
