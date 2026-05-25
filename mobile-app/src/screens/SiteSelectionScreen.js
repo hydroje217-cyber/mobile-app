@@ -15,6 +15,7 @@ import {
   evaluateSiteGeofence,
   findNearestSiteGeofence,
   formatDistanceMeters,
+  GEOFENCING_ENABLED,
   getSiteCoordinates,
   requestCurrentLocation,
   reverseGeocodePlaceName,
@@ -147,12 +148,16 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
     return navigator.onLine !== false;
   });
   const geofenceBySiteId = useMemo(() => {
+    if (!GEOFENCING_ENABLED) {
+      return {};
+    }
+
     return Object.fromEntries(
       sites.map((site) => [String(site.id), evaluateSiteGeofence(site, operatorLocation)])
     );
   }, [operatorLocation, sites]);
   const selectedGeofence = selectedSite ? geofenceBySiteId[String(selectedSite.id)] : null;
-  const selectedSiteHasGeofence = Boolean(getSiteCoordinates(selectedSite));
+  const selectedSiteHasGeofence = GEOFENCING_ENABLED && Boolean(getSiteCoordinates(selectedSite));
   const selectedSiteBlocked = Boolean(selectedSiteHasGeofence && selectedGeofence && !selectedGeofence.allowed);
   const selectedZoneState = locationChecking
     ? 'checking'
@@ -171,7 +176,7 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
     accuracy: 'Low GPS accuracy',
     checking: 'Checking GPS',
     needed: 'GPS needed',
-    inactive: 'No GPS fence',
+    inactive: GEOFENCING_ENABLED ? 'No GPS fence' : 'GPS disabled',
   }[selectedZoneState];
   const activeTutorialTarget = liveTutorialVisible ? liveTutorialSteps[liveTutorialStep]?.target : null;
   const compactGeofenceDistance = selectedSiteHasGeofence
@@ -317,6 +322,13 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
     let mounted = true;
 
     async function locateOperator() {
+      if (!GEOFENCING_ENABLED) {
+        setOperatorLocation(null);
+        setGeofenceTone('info');
+        setGeofenceMessage('GPS authorization is temporarily disabled.');
+        return;
+      }
+
       if (!sites.length) {
         return;
       }
@@ -518,6 +530,13 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
   }
 
   async function refreshOperatorLocation() {
+    if (!GEOFENCING_ENABLED) {
+      setOperatorLocation(null);
+      setGeofenceTone('info');
+      setGeofenceMessage('GPS authorization is temporarily disabled.');
+      return null;
+    }
+
     if (!sites.some((site) => getSiteCoordinates(site))) {
       setOperatorLocation(null);
       setGeofenceTone('info');
@@ -563,7 +582,7 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
       return;
     }
 
-    const siteHasGeofence = Boolean(getSiteCoordinates(site));
+    const siteHasGeofence = GEOFENCING_ENABLED && Boolean(getSiteCoordinates(site));
     let location = operatorLocation;
 
     if (siteHasGeofence && !location) {
@@ -804,7 +823,9 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
               </View>
             </View>
             <Text style={styles.geofenceBody}>
-              {locationChecking
+              {!GEOFENCING_ENABLED
+                ? 'GPS authorization is temporarily disabled.'
+                : locationChecking
                 ? 'Checking current location...'
                 : compactGeofenceMessage || (selectedSiteHasGeofence
                   ? `${formatDistanceMeters(selectedGeofence?.distanceM)} from site`
@@ -815,15 +836,17 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
         <View style={styles.geofenceDivider} />
         <Pressable
           onPress={refreshOperatorLocation}
-          disabled={locationChecking}
+          disabled={locationChecking || !GEOFENCING_ENABLED}
           style={({ pressed }) => [
             styles.geofenceRetryButton,
             pressed && !locationChecking ? styles.geofenceRetryButtonPressed : null,
-            locationChecking ? styles.geofenceRetryButtonDisabled : null,
+            locationChecking || !GEOFENCING_ENABLED ? styles.geofenceRetryButtonDisabled : null,
           ]}
         >
           <Ionicons name="locate-outline" size={15} color={palette.teal500} />
-          <Text style={styles.geofenceRetryText}>{locationChecking ? 'Checking GPS...' : 'Retry GPS check'}</Text>
+          <Text style={styles.geofenceRetryText}>
+            {!GEOFENCING_ENABLED ? 'GPS check disabled' : locationChecking ? 'Checking GPS...' : 'Retry GPS check'}
+          </Text>
         </Pressable>
       </View>
       </View>
@@ -866,7 +889,7 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
           {sites.map((site) => {
             const active = selectedSite?.id === site.id;
             const siteGeofence = geofenceBySiteId[String(site.id)];
-            const siteHasGeofence = Boolean(getSiteCoordinates(site));
+            const siteHasGeofence = GEOFENCING_ENABLED && Boolean(getSiteCoordinates(site));
             const blocked = Boolean(siteHasGeofence && siteGeofence && !siteGeofence.allowed);
             return (
               <Pressable

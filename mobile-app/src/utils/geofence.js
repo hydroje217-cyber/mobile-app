@@ -3,6 +3,8 @@ import * as Location from 'expo-location';
 
 export const DEFAULT_GEOFENCE_RADIUS_M = 20;
 export const MAX_LOCATION_ACCURACY_M = 50;
+// Temporarily disable GPS geofence enforcement. Flip back to true to re-enable.
+export const GEOFENCING_ENABLED = false;
 
 function toNumber(value) {
   const number = Number(value);

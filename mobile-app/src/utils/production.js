@@ -146,6 +146,35 @@ export function previousDayDifferenceByGroup(date, lastValueByDateAndGroup) {
   return count ? total : null;
 }
 
+export function sameDayDifferenceByGroup(rows, field) {
+  let total = 0;
+  let count = 0;
+
+  groupRowsByReadingGroup(rows).forEach((groupRows) => {
+    const values = groupRows
+      .map((item) => ({
+        value: parseProductionNumber(item[field]),
+        timestamp: getReadingTime(item),
+      }))
+      .filter((item) => item.value !== null)
+      .sort((a, b) => a.timestamp - b.timestamp);
+
+    if (values.length < 2) {
+      return;
+    }
+
+    const difference = values[values.length - 1].value - values[0].value;
+    if (difference < 0) {
+      return;
+    }
+
+    total += difference;
+    count += 1;
+  });
+
+  return count ? total : null;
+}
+
 export function groupReadingsByDay(items) {
   return items.reduce((map, item) => {
     const key = dayKeyFromReading(item);
@@ -268,6 +297,11 @@ export function aggregateDailyRows(items, fieldConfigs, options = {}) {
 
         if (config.aggregate === 'sum') {
           result[config.key] = sumForField(rows, config.field);
+          return;
+        }
+
+        if (config.aggregate === 'sameDayDifference') {
+          result[config.key] = sameDayDifferenceByGroup(rows, config.field);
           return;
         }
 
