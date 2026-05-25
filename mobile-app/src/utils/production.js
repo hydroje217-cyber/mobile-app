@@ -175,6 +175,185 @@ export function sameDayDifferenceByGroup(rows, field) {
   return count ? total : null;
 }
 
+function shiftKeyFromReadingTime(item) {
+  const parsed = new Date(item?.slot_datetime || item?.reading_datetime || item?.created_at || '');
+  if (Number.isNaN(parsed.getTime())) {
+    return '';
+  }
+
+  const minutes = parsed.getHours() * 60 + parsed.getMinutes();
+  if (minutes >= 7 * 60 && minutes < 15 * 60) {
+    return 'a';
+  }
+
+  if (minutes >= 15 * 60 && minutes < 23 * 60) {
+    return 'b';
+  }
+
+  return 'c';
+}
+
+function shiftBusinessDateKey(item) {
+  const parsed = new Date(item?.slot_datetime || item?.reading_datetime || item?.created_at || '');
+  if (Number.isNaN(parsed.getTime())) {
+    return '';
+  }
+
+  const shiftKey = shiftKeyFromReadingTime(item);
+  if (shiftKey === 'c' && parsed.getHours() >= 23) {
+    parsed.setDate(parsed.getDate() + 1);
+  }
+
+  return createDayKey(parsed);
+}
+
+function addShiftYield(total, count, currentValue, previousValue) {
+  if (currentValue === null || currentValue === undefined || previousValue === null || previousValue === undefined) {
+    return { total, count };
+  }
+
+  const difference = currentValue - previousValue;
+  if (difference < 0) {
+    return { total, count };
+  }
+
+  return {
+    total: total + difference,
+    count: count + 1,
+  };
+}
+
+function buildDailyShiftYieldMap(items, field) {
+  const latestByDateAndGroup = new Map();
+
+  items.forEach((item) => {
+    const value = parseProductionNumber(item[field]);
+    const date = shiftBusinessDateKey(item);
+    const shiftKey = shiftKeyFromReadingTime(item);
+    const groupKey = readingGroupKey(item);
+    const timestamp = getReadingTime(item);
+
+    if (value === null || !date || !shiftKey || !timestamp) {
+      return;
+    }
+
+    const dateGroups = latestByDateAndGroup.get(date) || new Map();
+    const shiftValues = dateGroups.get(groupKey) || {};
+    const current = shiftValues[shiftKey];
+
+    if (!current || timestamp > current.timestamp) {
+      shiftValues[shiftKey] = { value, timestamp };
+    }
+
+    dateGroups.set(groupKey, shiftValues);
+    latestByDateAndGroup.set(date, dateGroups);
+  });
+
+  return Array.from(latestByDateAndGroup.keys()).reduce((map, date) => {
+    const currentGroups = latestByDateAndGroup.get(date) || new Map();
+    const previousGroups = latestByDateAndGroup.get(previousDayKey(date)) || new Map();
+    const row = {
+      a: null,
+      b: null,
+      c: null,
+      total: null,
+    };
+    const counts = {
+      a: 0,
+      b: 0,
+      c: 0,
+      total: 0,
+    };
+
+    currentGroups.forEach((currentShifts, groupKey) => {
+      const previousShifts = previousGroups.get(groupKey) || {};
+      const cResult = addShiftYield(row.c || 0, counts.c, currentShifts.c?.value, previousShifts.b?.value);
+      row.c = cResult.count ? cResult.total : row.c;
+      counts.c = cResult.count;
+
+      const aResult = addShiftYield(row.a || 0, counts.a, currentShifts.a?.value, currentShifts.c?.value);
+      row.a = aResult.count ? aResult.total : row.a;
+      counts.a = aResult.count;
+
+      const bResult = addShiftYield(row.b || 0, counts.b, currentShifts.b?.value, currentShifts.a?.value);
+      row.b = bResult.count ? bResult.total : row.b;
+      counts.b = bResult.count;
+    });
+
+    ['a', 'b', 'c'].forEach((shiftKey) => {
+      if (row[shiftKey] !== null) {
+        row.total = (row.total || 0) + row[shiftKey];
+        counts.total += 1;
+      }
+    });
+
+    if (!counts.total) {
+      row.total = null;
+    }
+
+    map.set(date, row);
+    return map;
+  }, new Map());
+}
+
+export function addShiftYieldToRows(items, field, targetKey) {
+  const latestByDateAndGroup = new Map();
+
+  items.forEach((item) => {
+    const value = parseProductionNumber(item[field]);
+    const date = shiftBusinessDateKey(item);
+    const shiftKey = shiftKeyFromReadingTime(item);
+    const groupKey = readingGroupKey(item);
+    const timestamp = getReadingTime(item);
+
+    if (value === null || !date || !shiftKey || !timestamp) {
+      return;
+    }
+
+    const dateGroups = latestByDateAndGroup.get(date) || new Map();
+    const shiftValues = dateGroups.get(groupKey) || {};
+    const current = shiftValues[shiftKey];
+
+    if (!current || timestamp > current.timestamp) {
+      shiftValues[shiftKey] = { value, timestamp, row: item };
+    }
+
+    dateGroups.set(groupKey, shiftValues);
+    latestByDateAndGroup.set(date, dateGroups);
+  });
+
+  const yieldByRow = new Map();
+
+  latestByDateAndGroup.forEach((currentGroups, date) => {
+    const previousGroups = latestByDateAndGroup.get(previousDayKey(date)) || new Map();
+
+    currentGroups.forEach((currentShifts, groupKey) => {
+      const previousShifts = previousGroups.get(groupKey) || {};
+      [
+        ['c', currentShifts.c, previousShifts.b],
+        ['a', currentShifts.a, currentShifts.c],
+        ['b', currentShifts.b, currentShifts.a],
+      ].forEach(([, current, previous]) => {
+        if (!current || !previous) {
+          return;
+        }
+
+        const difference = current.value - previous.value;
+        if (difference < 0) {
+          return;
+        }
+
+        yieldByRow.set(current.row, difference);
+      });
+    });
+  });
+
+  return items.map((item) => ({
+    ...item,
+    [targetKey]: yieldByRow.has(item) ? yieldByRow.get(item) : null,
+  }));
+}
+
 export function groupReadingsByDay(items) {
   return items.reduce((map, item) => {
     const key = dayKeyFromReading(item);
@@ -241,12 +420,18 @@ function buildDailyAggregateMap(rows, valueKey) {
   }, new Map());
 }
 
-function mergeDailyMaps({ liveMap, summaryMap }) {
-  const merged = new Map(summaryMap);
-  liveMap.forEach((value, date) => {
+function mergeDailyMaps({ liveMap, summaryMap, preferSummary = false }) {
+  const merged = preferSummary ? new Map(liveMap) : new Map(summaryMap);
+  const overrideMap = preferSummary ? summaryMap : liveMap;
+
+  overrideMap.forEach((value, date) => {
     merged.set(date, value);
   });
   return merged;
+}
+
+function summaryMapOrLiveMap({ summaryMap, liveMap }) {
+  return summaryMap.size ? summaryMap : liveMap;
 }
 
 export function aggregateDailyRows(items, fieldConfigs, options = {}) {
@@ -266,6 +451,13 @@ export function aggregateDailyRows(items, fieldConfigs, options = {}) {
           ),
         ])
       );
+    }
+
+    return maps;
+  }, {});
+  const shiftYieldMaps = fieldConfigs.reduce((maps, config) => {
+    if (config.aggregate === 'shiftYield' || config.aggregate === 'shiftYieldTotal') {
+      maps[config.key] = buildDailyShiftYieldMap(items, config.field);
     }
 
     return maps;
@@ -302,6 +494,16 @@ export function aggregateDailyRows(items, fieldConfigs, options = {}) {
 
         if (config.aggregate === 'sameDayDifference') {
           result[config.key] = sameDayDifferenceByGroup(rows, config.field);
+          return;
+        }
+
+        if (config.aggregate === 'shiftYield') {
+          result[config.key] = shiftYieldMaps[config.key]?.get(date)?.[config.shift] ?? null;
+          return;
+        }
+
+        if (config.aggregate === 'shiftYieldTotal') {
+          result[config.key] = shiftYieldMaps[config.key]?.get(date)?.total ?? null;
           return;
         }
 
@@ -516,23 +718,36 @@ export function buildMonthlyPowerConsumption({ chlorinationReadings = [], deepwe
   const visibleFromDate = createDayKey(firstVisibleMonth);
   const visibleToDate = createDayKey(now);
   const summaryOptions = { visibleFromDate, visibleToDate };
-  const chlorinationPowerByDate = mergeDailyMaps({
-    liveMap: buildDailyAggregateMap(
-      aggregateDailyRows(
-        chlorinationReadings,
-        [{ key: 'power', field: 'chlorination_power_kwh', aggregate: 'sum' }],
-        summaryOptions
-      ),
-      'power'
+  const chlorinationLivePowerByDate = buildDailyAggregateMap(
+    aggregateDailyRows(
+      chlorinationReadings,
+      [{ key: 'power', field: 'chlorination_power_kwh', aggregate: 'shiftYieldTotal' }],
+      summaryOptions
     ),
-    summaryMap: buildDailySummaryMap(filterSummariesBySiteType(dailySummaries, 'CHLORINATION'), 'power_kwh', summaryOptions),
+    'power'
+  );
+  const chlorinationSummaryPowerByDate = buildDailySummaryMap(
+    filterSummariesBySiteType(dailySummaries, 'CHLORINATION'),
+    'power_kwh',
+    summaryOptions
+  );
+  const deepwellLivePowerByDate = buildDailyAggregateMap(
+    aggregateDailyRows(deepwellReadings, [{ key: 'power', field: 'power_kwh_shift', aggregate: 'shiftYieldTotal' }], summaryOptions),
+    'power'
+  );
+  const deepwellSummaryPowerByDate = buildDailySummaryMap(
+    filterSummariesBySiteType(dailySummaries, 'DEEPWELL'),
+    'power_kwh',
+    summaryOptions
+  );
+  const chlorinationPowerByDate = summaryMapOrLiveMap({
+    summaryMap: chlorinationSummaryPowerByDate,
+    liveMap: chlorinationLivePowerByDate,
   });
   const deepwellPowerByDate = mergeDailyMaps({
-    liveMap: buildDailyAggregateMap(
-      aggregateDailyRows(deepwellReadings, [{ key: 'power', field: 'power_kwh_shift', aggregate: 'sum' }], summaryOptions),
-      'power'
-    ),
-    summaryMap: buildDailySummaryMap(filterSummariesBySiteType(dailySummaries, 'DEEPWELL'), 'power_kwh', summaryOptions),
+    summaryMap: deepwellSummaryPowerByDate,
+    liveMap: deepwellLivePowerByDate,
+    preferSummary: true,
   });
 
   rowsByMonth.forEach((row) => {

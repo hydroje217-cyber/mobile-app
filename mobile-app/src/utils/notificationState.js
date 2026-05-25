@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 
 const READ_KEYS_PREFIX = 'nemexus.notificationReadKeys.v1';
+const DISMISSED_KEYS_PREFIX = 'nemexus.notificationDismissedKeys.v1';
 const UNREAD_COUNT_PREFIX = 'nemexus.notificationUnreadCount.v1';
 
 function getUserStorageSuffix(profile) {
@@ -14,6 +15,10 @@ export function getNotificationReadStorageKey(profile) {
 
 export function getNotificationUnreadCountStorageKey(profile) {
   return `${UNREAD_COUNT_PREFIX}.${getUserStorageSuffix(profile)}`;
+}
+
+export function getNotificationDismissedStorageKey(profile) {
+  return `${DISMISSED_KEYS_PREFIX}.${getUserStorageSuffix(profile)}`;
 }
 
 async function readStorageValue(key) {
@@ -48,6 +53,24 @@ export async function saveNotificationReadKeys(profile, readKeys) {
     await writeStorageValue(getNotificationReadStorageKey(profile), JSON.stringify(readKeys || {}));
   } catch {
     // Notification read state is a convenience cache; ignore storage failures.
+  }
+}
+
+export async function loadNotificationDismissedKeys(profile) {
+  try {
+    const rawValue = await readStorageValue(getNotificationDismissedStorageKey(profile));
+    const parsed = rawValue ? JSON.parse(rawValue) : {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function saveNotificationDismissedKeys(profile, dismissedKeys) {
+  try {
+    await writeStorageValue(getNotificationDismissedStorageKey(profile), JSON.stringify(dismissedKeys || {}));
+  } catch {
+    // Notification dismissed state is a convenience cache; ignore storage failures.
   }
 }
 

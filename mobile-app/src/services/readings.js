@@ -12,6 +12,10 @@ const CHLORINATION_LEGACY_SELECT =
 const DEEPWELL_LEGACY_SELECT =
   'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, remarks, upstream_pressure_psi, downstream_pressure_psi, flowrate_m3hr, vfd_frequency_hz, voltage_l1_v, voltage_l2_v, voltage_l3_v, amperage_a, tds_ppm, power_kwh_shift, status, sites(id, name, type), submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)';
 
+const DAILY_SUMMARY_SELECT =
+  'id, site_id, summary_date, source, source_file, production_m3, power_kwh, chlorine_kg, avg_flowrate_m3hr, avg_pressure_psi, avg_rc_ppm, avg_turbidity_ntu, avg_ph, avg_tds_ppm, peroxide_liters, operating_hours, scheduled_downtime_hours, unscheduled_downtime_hours, avg_upstream_pressure_psi, avg_downstream_pressure_psi, avg_vfd_frequency_hz, avg_voltage_l1_v, avg_voltage_l2_v, avg_voltage_l3_v, avg_amperage_a, site:sites(id, name, type)';
+const PAGE_SIZE = 1000;
+
 const READING_META = {
   CHLORINATION: {
     tableName: 'chlorination_readings',
@@ -67,6 +71,111 @@ function applyReadingFilters(query, { siteId, fromDate, toDate, limit }) {
   }
 
   return nextQuery;
+}
+
+function applyDailySummaryFilters(query, { siteId, fromDate, toDate, limit }) {
+  let nextQuery = query.order('summary_date', { ascending: false });
+
+  if (typeof limit === 'number' && Number.isFinite(limit)) {
+    nextQuery = nextQuery.limit(limit);
+  }
+
+  if (siteId) {
+    nextQuery = nextQuery.eq('site_id', siteId);
+  }
+
+  if (fromDate) {
+    nextQuery = nextQuery.gte('summary_date', fromDate);
+  }
+
+  if (toDate) {
+    nextQuery = nextQuery.lte('summary_date', toDate);
+  }
+
+  return nextQuery;
+}
+
+async function fetchReadingPage({ meta, siteType, siteId, fromDate, toDate, from, to }) {
+  let { data, error } = await applyReadingFilters(
+    supabase.from(meta.tableName).select(meta.listSelect),
+    { siteId, fromDate, toDate }
+  ).range(from, to);
+
+  if (error && isMissingGpsColumnError(error)) {
+    const fallback = await applyReadingFilters(
+      supabase.from(meta.tableName).select(meta.legacyListSelect),
+      { siteId, fromDate, toDate }
+    ).range(from, to);
+    data = fallback.data;
+    error = fallback.error;
+  }
+
+  if (error) {
+    throw error;
+  }
+
+  return (data ?? []).map((row) => normalizeReading(row, siteType));
+}
+
+async function fetchAllReadingsForType({ siteType, siteId, fromDate, toDate }) {
+  const meta = READING_META[siteType];
+  const rows = [];
+
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const page = await fetchReadingPage({
+      meta,
+      siteType,
+      siteId,
+      fromDate,
+      toDate,
+      from,
+      to: from + PAGE_SIZE - 1,
+    });
+
+    rows.push(...page);
+
+    if (page.length < PAGE_SIZE) {
+      break;
+    }
+  }
+
+  return rows;
+}
+
+async function fetchAllDailySiteSummaries({ siteId, siteType, fromDate, toDate }) {
+  const rows = [];
+
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await applyDailySummaryFilters(
+      supabase.from('daily_site_summaries').select(DAILY_SUMMARY_SELECT),
+      { siteId, fromDate, toDate }
+    ).range(from, from + PAGE_SIZE - 1);
+
+    if (error) {
+      throw error;
+    }
+
+    rows.push(...(data ?? []));
+
+    if ((data ?? []).length < PAGE_SIZE) {
+      break;
+    }
+  }
+
+  const normalizedSiteType = String(siteType || '').toUpperCase();
+
+  return rows
+    .filter((row) => {
+      if (!normalizedSiteType) {
+        return true;
+      }
+
+      return String(row?.site?.type || '').toUpperCase() === normalizedSiteType;
+    })
+    .map((row) => ({
+      ...row,
+      site_type: row?.site?.type,
+    }));
 }
 
 function buildChlorinationPayload(payload) {
@@ -219,7 +328,22 @@ export async function getLatestReadingForSite({ siteId, siteType }) {
   return data ? normalizeReading(data, siteType) : null;
 }
 
-export async function listReadings({ siteId, siteType, fromDate, toDate, limit }) {
+export async function listReadings({ siteId, siteType, fromDate, toDate, limit, includeAll = false }) {
+  if (includeAll && READING_META[siteType]) {
+    return fetchAllReadingsForType({ siteType, siteId, fromDate, toDate });
+  }
+
+  if (includeAll) {
+    const rows = await Promise.all([
+      fetchAllReadingsForType({ siteType: 'CHLORINATION', siteId, fromDate, toDate }),
+      fetchAllReadingsForType({ siteType: 'DEEPWELL', siteId, fromDate, toDate }),
+    ]);
+
+    return rows
+      .flat()
+      .sort((a, b) => new Date(b.reading_datetime || 0).getTime() - new Date(a.reading_datetime || 0).getTime());
+  }
+
   if (siteType === 'CHLORINATION') {
     let { data, error } = await applyReadingFilters(
       supabase.from('chlorination_readings').select(READING_META.CHLORINATION.listSelect),
@@ -303,4 +427,34 @@ export async function listReadings({ siteId, siteType, fromDate, toDate, limit }
   ]
     .sort((a, b) => new Date(b.reading_datetime || 0).getTime() - new Date(a.reading_datetime || 0).getTime())
     .slice(0, typeof limit === 'number' && Number.isFinite(limit) ? limit : undefined);
+}
+
+export async function listDailySiteSummaries({ siteId, siteType, fromDate, toDate, limit, includeAll = false } = {}) {
+  if (includeAll) {
+    return fetchAllDailySiteSummaries({ siteId, siteType, fromDate, toDate });
+  }
+
+  const { data, error } = await applyDailySummaryFilters(
+    supabase.from('daily_site_summaries').select(DAILY_SUMMARY_SELECT),
+    { siteId, fromDate, toDate, limit }
+  );
+
+  if (error) {
+    throw error;
+  }
+
+  const normalizedSiteType = String(siteType || '').toUpperCase();
+
+  return (data ?? [])
+    .filter((row) => {
+      if (!normalizedSiteType) {
+        return true;
+      }
+
+      return String(row?.site?.type || '').toUpperCase() === normalizedSiteType;
+    })
+    .map((row) => ({
+      ...row,
+      site_type: row?.site?.type,
+    }));
 }
