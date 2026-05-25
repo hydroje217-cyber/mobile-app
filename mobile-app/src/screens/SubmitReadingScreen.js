@@ -191,6 +191,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
   const [pendingSubmission, setPendingSubmission] = useState(null);
   const [draftReady, setDraftReady] = useState(false);
   const [editNow, setEditNow] = useState(() => new Date());
+  const [parameterJump, setParameterJump] = useState({ status: null, index: -1 });
 
   const isEditingReading = Boolean(editingReading?.id);
   const siteHasGeofence = Boolean(getSiteCoordinates(site));
@@ -234,31 +235,51 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
   const editWindowOpen = !isEditingReading || isReadingEditWindowOpen(editingReading, editNow);
   const isChlorination = site?.type === 'CHLORINATION';
   const isDeepwell = site?.type === 'DEEPWELL';
-  const parameterCount = isChlorination ? 11 : isDeepwell ? 10 : 0;
   const shiftBatchEnabled = isShiftBatchEntryWindow(formSlot);
   const nextShiftBatchReadingText = nextShiftBatchEntryText(formSlot);
   const shiftBatchNoticeText = shiftBatchEnabled
     ? 'Open for this shift.'
     : 'Shift usage fields open during the hour before shift turnover.';
   const currentShiftLabel = shiftNameForSlot(formSlot);
+  const activeParameterFields = useMemo(() => {
+    if (isChlorination) {
+      return [
+        ...CHLORINATION_BASE_FIELDS.map((key) => ({
+          key: `chlorination.${key}`,
+          value: chlorination[key],
+        })),
+        ...(shiftBatchEnabled
+          ? CHLORINATION_SHIFT_USAGE_FIELDS.map((key) => ({
+              key: `chlorination.${key}`,
+              value: chlorination[key],
+            }))
+          : []),
+      ];
+    }
+
+    if (isDeepwell) {
+      return [
+        ...DEEPWELL_BASE_FIELDS.map((key) => ({
+          key: `deepwell.${key}`,
+          value: deepwell[key],
+        })),
+        ...(shiftBatchEnabled
+          ? [{ key: 'deepwell.powerKwhShift', value: deepwell.powerKwhShift }]
+          : []),
+      ];
+    }
+
+    return [];
+  }, [chlorination, deepwell, isChlorination, isDeepwell, shiftBatchEnabled]);
   const completionProgress = useMemo(() => {
-    const activeFields = isChlorination
-      ? [
-          ...CHLORINATION_BASE_FIELDS.map((key) => chlorination[key]),
-          ...(shiftBatchEnabled ? CHLORINATION_SHIFT_USAGE_FIELDS.map((key) => chlorination[key]) : []),
-        ]
-      : isDeepwell
-        ? [
-            ...DEEPWELL_BASE_FIELDS.map((key) => deepwell[key]),
-            ...(shiftBatchEnabled ? [deepwell.powerKwhShift] : []),
-          ]
-        : [];
+    const completed = activeParameterFields.filter((field) => String(field.value ?? '').trim()).length;
 
     return {
-      completed: activeFields.filter((value) => String(value ?? '').trim()).length,
-      total: activeFields.length,
+      completed,
+      missing: Math.max(activeParameterFields.length - completed, 0),
+      total: activeParameterFields.length,
     };
-  }, [chlorination, deepwell, isChlorination, isDeepwell, shiftBatchEnabled]);
+  }, [activeParameterFields]);
 
   useEffect(() => {
     refreshOfflineCount();
@@ -421,6 +442,31 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
 
   function focusField(key) {
     fieldRefs.current[key]?.focus?.();
+  }
+
+  function getParameterFieldsByStatus(status) {
+    return activeParameterFields.filter((field) => {
+      const filled = Boolean(String(field.value ?? '').trim());
+      return status === 'complete' ? filled : !filled;
+    });
+  }
+
+  function jumpToParameterStatus(status, advance = false) {
+    const fields = getParameterFieldsByStatus(status);
+
+    if (!fields.length) {
+      setParameterJump({ status: null, index: -1 });
+      setResultTone('info');
+      setResultMessage(status === 'complete' ? 'No completed parameter fields yet.' : 'No missing parameter fields right now.');
+      scrollToResultMessage();
+      return;
+    }
+
+    const shouldAdvance = advance && parameterJump.status === status && parameterJump.index >= 0;
+    const nextIndex = shouldAdvance ? (parameterJump.index + 1) % fields.length : 0;
+
+    setParameterJump({ status, index: nextIndex });
+    setTimeout(() => focusField(fields[nextIndex].key), 80);
   }
 
   function scrollToResultMessage() {
@@ -1137,12 +1183,71 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
               <Text style={styles.contextPillLabel}>Shift</Text>
               <Text style={styles.contextPillValue}>{currentShiftLabel}</Text>
             </View>
-            <View style={styles.contextPill}>
+            <Pressable
+              onPress={() => jumpToParameterStatus('complete')}
+              accessibilityRole="button"
+              accessibilityLabel="Scroll to completed parameters"
+              style={({ pressed }) => [
+                styles.contextPill,
+                styles.contextPillButton,
+                parameterJump.status === 'complete' ? styles.contextPillActive : null,
+                pressed ? styles.contextPillPressed : null,
+              ]}
+            >
               <Text style={styles.contextPillLabel}>Completed</Text>
-              <Text style={styles.contextPillValue}>
-                {completionProgress.completed}/{completionProgress.total || parameterCount}
+              <View style={styles.contextPillValueRow}>
+                <Text style={styles.contextPillValue}>{completionProgress.completed}</Text>
+                {completionProgress.completed > 1 && parameterJump.status === 'complete' ? (
+                  <Pressable
+                    onPress={(event) => {
+                      event.stopPropagation?.();
+                      jumpToParameterStatus('complete', true);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Next completed parameter"
+                    style={({ pressed }) => [styles.contextPillNextButton, pressed ? styles.contextPillNextButtonPressed : null]}
+                  >
+                    <Text style={styles.contextPillNextText}>Next</Text>
+                    <Ionicons name="arrow-down-outline" size={12} color={palette.teal600} />
+                  </Pressable>
+                ) : null}
+              </View>
+            </Pressable>
+            <Pressable
+              onPress={() => jumpToParameterStatus('missing')}
+              accessibilityRole="button"
+              accessibilityLabel="Scroll to missing parameters"
+              style={({ pressed }) => [
+                styles.contextPill,
+                styles.contextPillButton,
+                completionProgress.missing > 0 ? styles.contextPillWarning : null,
+                parameterJump.status === 'missing' ? styles.contextPillActive : null,
+                pressed ? styles.contextPillPressed : null,
+              ]}
+            >
+              <Text style={[styles.contextPillLabel, completionProgress.missing > 0 ? styles.contextPillLabelWarning : null]}>
+                Missing
               </Text>
-            </View>
+              <View style={styles.contextPillValueRow}>
+                <Text style={[styles.contextPillValue, completionProgress.missing > 0 ? styles.contextPillValueWarning : null]}>
+                  {completionProgress.missing}
+                </Text>
+                {completionProgress.missing > 1 && parameterJump.status === 'missing' ? (
+                  <Pressable
+                    onPress={(event) => {
+                      event.stopPropagation?.();
+                      jumpToParameterStatus('missing', true);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Next missing parameter"
+                    style={({ pressed }) => [styles.contextPillNextButton, pressed ? styles.contextPillNextButtonPressed : null]}
+                  >
+                    <Text style={styles.contextPillNextText}>Next</Text>
+                    <Ionicons name="arrow-down-outline" size={12} color={palette.teal600} />
+                  </Pressable>
+                ) : null}
+              </View>
+            </Pressable>
           </View>
         </Card>
       
@@ -1734,6 +1839,20 @@ function createStyles(palette, isDark, responsiveMetrics) {
       paddingHorizontal: 12,
       paddingVertical: 10,
     },
+    contextPillButton: {
+      minHeight: 64,
+    },
+    contextPillPressed: {
+      transform: [{ scale: 0.98 }],
+    },
+    contextPillActive: {
+      borderColor: palette.teal600,
+      backgroundColor: isDark ? '#123B3C' : '#E8FBF8',
+    },
+    contextPillWarning: {
+      borderColor: isDark ? '#70464A' : '#F0B8BE',
+      backgroundColor: isDark ? '#24161B' : '#FFF5F6',
+    },
     contextPillLabel: {
       color: palette.ink500,
       fontSize: 10,
@@ -1741,11 +1860,45 @@ function createStyles(palette, isDark, responsiveMetrics) {
       textTransform: 'uppercase',
       letterSpacing: 0.4,
     },
+    contextPillLabelWarning: {
+      color: palette.errorText,
+    },
     contextPillValue: {
       marginTop: 4,
       color: palette.ink900,
       fontSize: 13,
       fontWeight: '800',
+    },
+    contextPillValueWarning: {
+      color: palette.errorText,
+    },
+    contextPillValueRow: {
+      marginTop: 4,
+      minHeight: 22,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+    },
+    contextPillNextButton: {
+      minHeight: 24,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 4,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: isDark ? '#276C64' : '#B6E9E3',
+      backgroundColor: isDark ? '#102D31' : '#FFFFFF',
+      paddingHorizontal: 8,
+    },
+    contextPillNextButtonPressed: {
+      transform: [{ scale: 0.96 }],
+    },
+    contextPillNextText: {
+      color: palette.teal600,
+      fontSize: 10,
+      fontWeight: '900',
     },
     geofenceCard: {
       gap: 12,

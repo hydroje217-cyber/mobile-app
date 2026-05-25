@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
@@ -93,8 +94,12 @@ export default function OfficeBottomNav({ activeKey, navigation, variant = 'offi
   const { profile } = useAuth();
   const { palette, isDark } = useTheme();
   const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const metrics = useMemo(() => getResponsiveMetrics(width), [width]);
-  const styles = useMemo(() => createStyles(palette, isDark, metrics), [palette, isDark, metrics]);
+  const styles = useMemo(
+    () => createStyles(palette, isDark, metrics, insets.bottom),
+    [palette, isDark, metrics, insets.bottom]
+  );
   const items = useMemo(() => {
     if (variant === 'operator') {
       return [
@@ -235,20 +240,23 @@ export default function OfficeBottomNav({ activeKey, navigation, variant = 'offi
   );
 }
 
-function createStyles(palette, isDark, metrics) {
+function createStyles(palette, isDark, metrics, bottomInset = 0) {
+  const bottomPadding = Math.max(Math.round(14 * metrics.scale), bottomInset + Math.round(10 * metrics.scale));
+  const glowBottom = Math.max(Math.round(12 * metrics.scale), bottomInset + Math.round(8 * metrics.scale));
+
   return StyleSheet.create(scaleStyleDefinitions({
     navWrap: {
       position: 'relative',
       paddingHorizontal: metrics.contentPadding,
       paddingTop: 8,
-      paddingBottom: 14,
+      paddingBottom: bottomPadding,
       backgroundColor: 'transparent',
     },
     navGlow: {
       position: 'absolute',
       left: metrics.contentPadding + 18,
       right: metrics.contentPadding + 18,
-      bottom: 12,
+      bottom: glowBottom,
       height: 38,
       borderRadius: 12,
       backgroundColor: isDark ? 'rgba(28,199,180,0.18)' : 'rgba(13,148,136,0.14)',
@@ -342,6 +350,8 @@ function createStyles(palette, isDark, metrics) {
       'navBar.width',
       'navBar.maxWidth',
       'navBar.alignSelf',
+      'navWrap.paddingBottom',
+      'navGlow.bottom',
       'navBlurLayer.position',
       'navBlurLayer.top',
       'navBlurLayer.right',
