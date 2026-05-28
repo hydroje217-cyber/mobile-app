@@ -14,9 +14,11 @@ try {
 
   const {
     addShiftYieldToRows,
+    addSlotProductionToRows,
     aggregateDailyRows,
     buildDailyPowerConsumption,
     buildDailyProduction,
+    buildDailyTotalizerProductionRows,
     buildDailyTotalizerRows,
     buildMonthlyChemicalUsage,
     buildMonthlyProduction,
@@ -89,6 +91,98 @@ try {
     [['2026-02-01', 70, 130, 150, 350]]
   );
 
+  const slotProductionReadings = [
+    { site_id: 1, slot_datetime: '2026-01-31T23:00:00', totalizer: 62121.3 },
+    { site_id: 1, slot_datetime: '2026-02-01T07:00:00', totalizer: 62174.7 },
+    { site_id: 1, slot_datetime: '2026-02-01T15:00:00', totalizer: 62351.1 },
+    { site_id: 1, slot_datetime: '2026-02-01T23:00:00', totalizer: 62564.9 },
+    { site_id: 1, slot_datetime: '2026-02-01T23:30:00', totalizer: 62579.6 },
+  ];
+  const slotProductionRows = aggregateDailyRows(
+    slotProductionReadings,
+    [
+      { key: 'productionTotal', field: 'totalizer', aggregate: 'slotProductionTotal' },
+      { key: 'productionA', field: 'totalizer', aggregate: 'slotProduction', shift: 'a' },
+      { key: 'productionB', field: 'totalizer', aggregate: 'slotProduction', shift: 'b' },
+      { key: 'productionC', field: 'totalizer', aggregate: 'slotProduction', shift: 'c' },
+    ],
+    {
+      visibleFromDate: '2026-02-01',
+      visibleToDate: '2026-02-01',
+    }
+  );
+
+  assert.deepEqual(
+    slotProductionRows.map((row) => [
+      row.date,
+      Number(row.productionA.toFixed(1)),
+      Number(row.productionB.toFixed(1)),
+      Number(row.productionC.toFixed(1)),
+      Number(row.productionTotal.toFixed(1)),
+    ]),
+    [['2026-02-01', 53.4, 176.4, 213.8, 443.6]]
+  );
+  assert.deepEqual(
+    buildDailyTotalizerProductionRows(slotProductionReadings, {
+      visibleFromDate: '2026-02-01',
+      visibleToDate: '2026-02-01',
+    }).map((row) => ({ ...row, totalizer: Number(row.totalizer.toFixed(1)) })),
+    [{ date: '2026-02-01', totalizer: 443.6 }]
+  );
+  assert.deepEqual(
+    addSlotProductionToRows(slotProductionReadings, 'totalizer', 'production_m3').map((row) => [
+      row.slot_datetime,
+      row.production_m3 === null ? null : Number(row.production_m3.toFixed(1)),
+    ]),
+    [
+      ['2026-01-31T23:00:00', null],
+      ['2026-02-01T07:00:00', 53.4],
+      ['2026-02-01T15:00:00', 176.4],
+      ['2026-02-01T23:00:00', 213.8],
+      ['2026-02-01T23:30:00', null],
+    ]
+  );
+  assert.deepEqual(
+    addSlotProductionToRows(
+      [
+        { site_id: 1, slot_datetime: '2026-05-27T23:00:00', totalizer: 63389.8 },
+        { site_id: 1, slot_datetime: '2026-05-28T06:30:00', totalizer: 63426.6 },
+        { site_id: 1, slot_datetime: '2026-05-28T07:00:00', totalizer: 63435.7 },
+        { site_id: 1, slot_datetime: '2026-05-28T07:30:00', totalizer: 63442.2 },
+      ],
+      'totalizer',
+      'production_m3'
+    ).map((row) => [
+      row.slot_datetime,
+      row.production_m3 === null ? null : Number(row.production_m3.toFixed(1)),
+    ]),
+    [
+      ['2026-05-27T23:00:00', null],
+      ['2026-05-28T06:30:00', null],
+      ['2026-05-28T07:00:00', 45.9],
+      ['2026-05-28T07:30:00', null],
+    ]
+  );
+  assert.deepEqual(
+    addSlotProductionToRows(
+      [
+        { site_id: 1, slot_datetime: '2026-05-27T15:00:00.000Z', totalizer: 63389.8 },
+        { site_id: 1, slot_datetime: '2026-05-27T22:30:00.000Z', totalizer: 63426.6 },
+        { site_id: 1, slot_datetime: '2026-05-27T23:00:00.000Z', totalizer: 63435.7 },
+      ],
+      'totalizer',
+      'production_m3'
+    ).map((row) => [
+      row.slot_datetime,
+      row.production_m3 === null ? null : Number(row.production_m3.toFixed(1)),
+    ]),
+    [
+      ['2026-05-27T15:00:00.000Z', null],
+      ['2026-05-27T22:30:00.000Z', null],
+      ['2026-05-27T23:00:00.000Z', 45.9],
+    ]
+  );
+
   const readingsWithShiftYields = addShiftYieldToRows(
     [
       { id: 'prev-b', site_id: 1, slot_datetime: '2026-01-31T22:30:00', power_kwh: 100 },
@@ -148,10 +242,10 @@ try {
     monthlyProduction.rows.map((row) => row.key),
     ['2026-02', '2026-01']
   );
-  assert.equal(monthlyProduction.rows[0].production, 130);
+  assert.equal(monthlyProduction.rows[0].production, 0);
   assert.equal(monthlyProduction.rows[1].production, 0);
-  assert.equal(monthlyProduction.totalProduction, 130);
-  assert.equal(monthlyProduction.averageProduction, 130);
+  assert.equal(monthlyProduction.totalProduction, 0);
+  assert.equal(monthlyProduction.averageProduction, 0);
 
   const dailyProduction = buildDailyProduction(readings, {
     now: new Date('2026-02-02T12:00:00.000Z'),
@@ -160,12 +254,12 @@ try {
   assert.deepEqual(
     dailyProduction.rows.map((row) => [row.date, row.production]),
     [
-      ['2026-02-02', 50],
-      ['2026-02-01', 80],
+      ['2026-02-02', 0],
+      ['2026-02-01', 0],
     ]
   );
   assert.equal(dailyProduction.monthLabel, 'February 2026');
-  assert.equal(dailyProduction.totalProduction, 130);
+  assert.equal(dailyProduction.totalProduction, 0);
 
   const powerConsumption = buildMonthlyPowerConsumption(
     {
@@ -258,8 +352,8 @@ try {
     productionWithSummaries.rows.map((row) => [row.date, row.production]),
     [
       ['2026-02-03', 65],
-      ['2026-02-02', 50],
-      ['2026-02-01', 80],
+      ['2026-02-02', 0],
+      ['2026-02-01', 999],
     ]
   );
 
@@ -269,8 +363,8 @@ try {
     dailySummaries: historicalSummaries,
   });
 
-  assert.equal(monthlyProductionWithSummaries.rows[0].production, 195);
-  assert.equal(monthlyProductionWithSummaries.totalProduction, 195);
+  assert.equal(monthlyProductionWithSummaries.rows[0].production, 1064);
+  assert.equal(monthlyProductionWithSummaries.totalProduction, 1064);
 
   const monthlyPowerWithSummaries = buildMonthlyPowerConsumption(
     {

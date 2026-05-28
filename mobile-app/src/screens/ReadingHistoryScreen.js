@@ -24,7 +24,7 @@ import { useTheme } from '../context/ThemeContext';
 import { listDailySiteSummaries, listReadings } from '../services/readings';
 import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 import { saveNativeExportFile, buildNativeExportSuccessMessage } from '../utils/exportFiles';
-import { addShiftYieldToRows, aggregateDailyRows } from '../utils/production';
+import { addShiftYieldToRows, addSlotProductionToRows, aggregateDailyRows } from '../utils/production';
 
 const DEFAULT_HISTORY_LIMIT = 50;
 const MAX_HISTORY_LIMIT = 200;
@@ -1148,6 +1148,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     { key: 'tank', label: 'Tank Level', width: 105, render: (row) => row.tank_level_liters },
     { key: 'flowrate', label: 'Flowrate', width: 95, render: (row) => row.flowrate_m3hr },
     { key: 'totalizer', label: 'Totalizer', width: 95, render: (row) => row.totalizer },
+    { key: 'production', label: 'Production m3', width: 125, render: (row) => formatAverageValue(row.production_m3) },
     { key: 'powerConsumption', label: 'Power kWh', width: 105, render: (row) => row.chlorination_power_kwh },
     { key: 'powerYield', label: 'Power Consumed kWh', width: 155, render: (row) => formatAverageValue(row.power_yield_kwh) },
     { key: 'chlorine', label: 'Chlorine Used', width: 115, render: (row) => row.chlorine_consumed },
@@ -1170,8 +1171,8 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     { key: 'l3', label: 'Volt L3', width: 90, render: (row) => row.voltage_l3_v },
     { key: 'amps', label: 'Amperage', width: 95, render: (row) => row.amperage_a },
     { key: 'tds', label: 'TDS', width: 80, render: (row) => row.tds_ppm },
-    { key: 'power', label: 'Power kWh', width: 100, render: (row) => row.power_kwh_shift },
-    { key: 'powerYield', label: 'Power Consumed kWh', width: 155, render: (row) => formatAverageValue(row.power_yield_kwh) },
+    { key: 'power', label: 'Power kWh Reading', width: 135, render: (row) => row.power_kwh_shift },
+    { key: 'powerYield', label: 'Power kWh Consumed', width: 155, render: (row) => formatAverageValue(row.power_yield_kwh) },
     { key: 'recordedAt', label: 'Recorded At', width: 135, render: (row) => formatShortDateTime(row.reading_datetime) },
     { key: 'recordedBy', label: 'Recorded By', width: 140, render: (row) => row.submitted_profile?.full_name || row.submitted_profile?.email || '-' },
     { key: 'remarks', label: 'Remarks', width: 160, render: (row) => row.remarks || row.status || '-' },
@@ -1196,7 +1197,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     { key: 'tds', field: 'tds_ppm', label: 'AVG TDS (PPM)', width: 120 },
     { key: 'tank', field: 'tank_level_liters', label: 'AVG TANK LEVEL (L)', width: 145 },
     { key: 'flowrate', field: 'flowrate_m3hr', label: 'AVG FLOWRATE (M3/HR)', width: 150 },
-    { key: 'totalizer', field: 'totalizer', label: 'TOTALIZER', width: 120, aggregate: 'previousDayDifference' },
+    { key: 'totalizer', field: 'totalizer', label: 'PRODUCTION (M3)', width: 140, aggregate: 'slotProductionTotal' },
     { key: 'powerConsumption', field: 'chlorination_power_kwh', label: 'POWER CONSUMPTION (KWH)', width: 190, aggregate: 'shiftYieldTotal' },
     { key: 'chlorine', field: 'chlorine_consumed', label: 'AVG CHLORINE USED (KG)', width: 165 },
     { key: 'peroxide', field: 'peroxide_consumption', label: 'AVG PEROXIDE CONSUMPTION', width: 190 },
@@ -1328,7 +1329,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
         shouldLoadRecords && canLoadDailyAverages
           ? listReadings({
               ...recordYieldFilters,
-              limit: Math.min(MAX_AVERAGE_SOURCE_LIMIT, Math.max(safeLimit, DEFAULT_HISTORY_LIMIT)),
+              includeAll: true,
             })
           : Promise.resolve([]),
         shouldLoadDailyAverages
@@ -1340,7 +1341,11 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
       ]);
       const computedRecordItems =
         shouldLoadRecords && effectiveTableMode === 'CHLORINATION'
-          ? addShiftYieldToRows(recordYieldItems, 'chlorination_power_kwh', 'power_yield_kwh')
+          ? addSlotProductionToRows(
+              addShiftYieldToRows(recordYieldItems, 'chlorination_power_kwh', 'power_yield_kwh'),
+              'totalizer',
+              'production_m3'
+            )
           : shouldLoadRecords && effectiveTableMode === 'DEEPWELL'
             ? addShiftYieldToRows(recordYieldItems, 'power_kwh_shift', 'power_yield_kwh')
             : nextItems;
@@ -1366,10 +1371,10 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
             .filter(Boolean)
         : [];
       const combinedAverageRows =
-        effectiveTableMode === 'DEEPWELL'
+        effectiveTableMode === 'CHLORINATION'
           ? mergeSummaryAndLiveAverageRows(summaryAverageRows, liveAverageRows)
-          : summaryAverageRows.length
-            ? summaryAverageRows
+          : effectiveTableMode === 'DEEPWELL'
+            ? mergeSummaryAndLiveAverageRows(summaryAverageRows, liveAverageRows)
             : liveAverageRows;
       const averageRows = combinedAverageRows
         .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));

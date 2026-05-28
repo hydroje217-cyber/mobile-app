@@ -40,6 +40,12 @@ export function dayKeyFromReading(item) {
   return String(value || '').slice(0, 10);
 }
 
+function localDayKeyFromReading(item) {
+  const value = item?.slot_datetime || item?.reading_datetime || item?.created_at;
+  const parsed = new Date(value || '');
+  return Number.isNaN(parsed.getTime()) ? String(value || '').slice(0, 10) : createDayKey(parsed);
+}
+
 export function getReadingTime(item) {
   const parsed = new Date(item?.slot_datetime || item?.reading_datetime || item?.created_at || '');
   return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
@@ -207,6 +213,28 @@ function shiftBusinessDateKey(item) {
   return createDayKey(parsed);
 }
 
+function slotProductionKeyFromReadingTime(item) {
+  const parsed = new Date(item?.slot_datetime || item?.reading_datetime || item?.created_at || '');
+  if (Number.isNaN(parsed.getTime())) {
+    return '';
+  }
+
+  const minutes = parsed.getHours() * 60 + parsed.getMinutes();
+  if (minutes === 7 * 60) {
+    return 'a';
+  }
+
+  if (minutes === 15 * 60) {
+    return 'b';
+  }
+
+  if (minutes === 23 * 60) {
+    return 'c';
+  }
+
+  return '';
+}
+
 function addShiftYield(total, count, currentValue, previousValue) {
   if (currentValue === null || currentValue === undefined || previousValue === null || previousValue === undefined) {
     return { total, count };
@@ -296,6 +324,79 @@ function buildDailyShiftYieldMap(items, field) {
   }, new Map());
 }
 
+function buildDailySlotProductionMap(items, field) {
+  const slotValuesByDateAndGroup = new Map();
+
+  items.forEach((item) => {
+    const value = parseProductionNumber(item[field]);
+    const date = localDayKeyFromReading(item);
+    const slotKey = slotProductionKeyFromReadingTime(item);
+    const groupKey = readingGroupKey(item);
+    const timestamp = getReadingTime(item);
+
+    if (value === null || !date || !slotKey || !timestamp) {
+      return;
+    }
+
+    const dateGroups = slotValuesByDateAndGroup.get(date) || new Map();
+    const slotValues = dateGroups.get(groupKey) || {};
+    const current = slotValues[slotKey];
+
+    if (!current || timestamp > current.timestamp) {
+      slotValues[slotKey] = { value, timestamp };
+    }
+
+    dateGroups.set(groupKey, slotValues);
+    slotValuesByDateAndGroup.set(date, dateGroups);
+  });
+
+  return Array.from(slotValuesByDateAndGroup.keys()).reduce((map, date) => {
+    const currentGroups = slotValuesByDateAndGroup.get(date) || new Map();
+    const previousGroups = slotValuesByDateAndGroup.get(previousDayKey(date)) || new Map();
+    const row = {
+      a: null,
+      b: null,
+      c: null,
+      total: null,
+    };
+    const counts = {
+      a: 0,
+      b: 0,
+      c: 0,
+      total: 0,
+    };
+
+    currentGroups.forEach((currentSlots, groupKey) => {
+      const previousSlots = previousGroups.get(groupKey) || {};
+      const aResult = addShiftYield(row.a || 0, counts.a, currentSlots.a?.value, previousSlots.c?.value);
+      row.a = aResult.count ? aResult.total : row.a;
+      counts.a = aResult.count;
+
+      const bResult = addShiftYield(row.b || 0, counts.b, currentSlots.b?.value, currentSlots.a?.value);
+      row.b = bResult.count ? bResult.total : row.b;
+      counts.b = bResult.count;
+
+      const cResult = addShiftYield(row.c || 0, counts.c, currentSlots.c?.value, currentSlots.b?.value);
+      row.c = cResult.count ? cResult.total : row.c;
+      counts.c = cResult.count;
+    });
+
+    ['a', 'b', 'c'].forEach((slotKey) => {
+      if (row[slotKey] !== null) {
+        row.total = (row.total || 0) + row[slotKey];
+        counts.total += 1;
+      }
+    });
+
+    if (!counts.total) {
+      row.total = null;
+    }
+
+    map.set(date, row);
+    return map;
+  }, new Map());
+}
+
 export function addShiftYieldToRows(items, field, targetKey) {
   const latestByDateAndGroup = new Map();
 
@@ -351,6 +452,64 @@ export function addShiftYieldToRows(items, field, targetKey) {
   return items.map((item) => ({
     ...item,
     [targetKey]: yieldByRow.has(item) ? yieldByRow.get(item) : null,
+  }));
+}
+
+export function addSlotProductionToRows(items, field, targetKey) {
+  const slotValuesByDateAndGroup = new Map();
+
+  items.forEach((item) => {
+    const value = parseProductionNumber(item[field]);
+    const date = localDayKeyFromReading(item);
+    const slotKey = slotProductionKeyFromReadingTime(item);
+    const groupKey = readingGroupKey(item);
+    const timestamp = getReadingTime(item);
+
+    if (value === null || !date || !slotKey || !timestamp) {
+      return;
+    }
+
+    const dateGroups = slotValuesByDateAndGroup.get(date) || new Map();
+    const slotValues = dateGroups.get(groupKey) || {};
+    const current = slotValues[slotKey];
+
+    if (!current || timestamp > current.timestamp) {
+      slotValues[slotKey] = { value, timestamp, row: item };
+    }
+
+    dateGroups.set(groupKey, slotValues);
+    slotValuesByDateAndGroup.set(date, dateGroups);
+  });
+
+  const productionByRow = new Map();
+
+  slotValuesByDateAndGroup.forEach((currentGroups, date) => {
+    const previousGroups = slotValuesByDateAndGroup.get(previousDayKey(date)) || new Map();
+
+    currentGroups.forEach((currentSlots, groupKey) => {
+      const previousSlots = previousGroups.get(groupKey) || {};
+      [
+        [currentSlots.a, previousSlots.c],
+        [currentSlots.b, currentSlots.a],
+        [currentSlots.c, currentSlots.b],
+      ].forEach(([current, previous]) => {
+        if (!current || !previous) {
+          return;
+        }
+
+        const difference = current.value - previous.value;
+        if (difference < 0) {
+          return;
+        }
+
+        productionByRow.set(current.row, difference);
+      });
+    });
+  });
+
+  return items.map((item) => ({
+    ...item,
+    [targetKey]: productionByRow.has(item) ? productionByRow.get(item) : null,
   }));
 }
 
@@ -462,6 +621,13 @@ export function aggregateDailyRows(items, fieldConfigs, options = {}) {
 
     return maps;
   }, {});
+  const slotProductionMaps = fieldConfigs.reduce((maps, config) => {
+    if (config.aggregate === 'slotProduction' || config.aggregate === 'slotProductionTotal') {
+      maps[config.key] = buildDailySlotProductionMap(items, config.field);
+    }
+
+    return maps;
+  }, {});
 
   return sortedEntries
     .filter(([date]) => {
@@ -507,6 +673,16 @@ export function aggregateDailyRows(items, fieldConfigs, options = {}) {
           return;
         }
 
+        if (config.aggregate === 'slotProduction') {
+          result[config.key] = slotProductionMaps[config.key]?.get(date)?.[config.shift] ?? null;
+          return;
+        }
+
+        if (config.aggregate === 'slotProductionTotal') {
+          result[config.key] = slotProductionMaps[config.key]?.get(date)?.total ?? null;
+          return;
+        }
+
         result[config.key] = averageForField(rows, config.field);
       });
 
@@ -518,6 +694,17 @@ export function buildDailyTotalizerRows(readings, options = {}) {
   return aggregateDailyRows(
     readings,
     [{ key: 'totalizer', field: 'totalizer', aggregate: 'previousDayDifference' }],
+    options
+  ).map((row) => ({
+    date: row.date,
+    totalizer: row.totalizer,
+  }));
+}
+
+export function buildDailyTotalizerProductionRows(readings, options = {}) {
+  return aggregateDailyRows(
+    readings,
+    [{ key: 'totalizer', field: 'totalizer', aggregate: 'slotProductionTotal' }],
     options
   ).map((row) => ({
     date: row.date,
@@ -545,7 +732,7 @@ export function buildMonthlyProduction(readings, options = {}) {
   }
 
   const productionByDate = mergeDailyMaps({
-    liveMap: buildDailyAggregateMap(buildDailyTotalizerRows(readings, { visibleFromDate, visibleToDate }), 'totalizer'),
+    liveMap: buildDailyAggregateMap(buildDailyTotalizerProductionRows(readings, { visibleFromDate, visibleToDate }), 'totalizer'),
     summaryMap: buildDailySummaryMap(filterSummariesBySiteType(dailySummaries, 'CHLORINATION'), 'production_m3', {
       visibleFromDate,
       visibleToDate,
@@ -581,7 +768,7 @@ export function buildDailyProduction(readings, options = {}) {
   const visibleFromDate = createDayKey(firstVisibleDay);
   const visibleToDate = createDayKey(now);
   const productionByDate = mergeDailyMaps({
-    liveMap: buildDailyAggregateMap(buildDailyTotalizerRows(readings, { visibleFromDate, visibleToDate }), 'totalizer'),
+    liveMap: buildDailyAggregateMap(buildDailyTotalizerProductionRows(readings, { visibleFromDate, visibleToDate }), 'totalizer'),
     summaryMap: buildDailySummaryMap(filterSummariesBySiteType(dailySummaries, 'CHLORINATION'), 'production_m3', {
       visibleFromDate,
       visibleToDate,
