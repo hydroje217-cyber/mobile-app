@@ -98,7 +98,7 @@ begin
       ('14:00'::time, 38, 12, 16.3, 47, 448.7, 447.9, 452.5, 32.86, null, null, '3/4 TURN'),
       ('14:30'::time, 35, 16, 15.4, 47, 444.0, 442.1, 447.8, 32.84, null, 51310, '3/4 TURN'), -- UNCERTAIN power_kwh_shift read as 51310.
       ('15:00'::time, 40, 17, 15.3, 47, 447.8, 446.4, 452.8, 32.88, null, null, '3/4 TURN'), -- UNCERTAIN voltage_l3_v.
-      ('15:30'::time, 40, 20, 14.6, 47, 429.1, 445.3, 460.9, 32.81, null, null, '3/4 TURN'), -- UNCERTAIN voltage_l1_v/voltage_l2_v/voltage_l3_v.
+      ('15:30'::time, 40, 20, 14.6, 47, 459.1, 445.3, 460.9, 32.81, null, null, '3/4 TURN'), -- UNCERTAIN voltage_l1_v/voltage_l2_v/voltage_l3_v.
       ('16:00'::time, 42, 22, 17.6, 47, 468.2, 443.4, 450.9, 32.61, null, null, '3/4 TURN'), -- UNCERTAIN voltage_l2_v.
       ('16:30'::time, 42, 22, 17.2, 47, 455.1, 450.8, 457.6, 32.79, null, null, '3/4 TURN'),
       ('17:00'::time, 43, 23, 16.5, 47, 457.7, 451.8, 460.5, 32.88, null, null, '3/4 TURN'),
@@ -108,10 +108,10 @@ begin
       ('19:00'::time, 40, 19, 16.4, 47, 436.1, 429.1, 443.9, 32.79, null, null, '3/4 TURN'),
       ('19:30'::time, 42, 22, 16.9, 47, 441.1, 438.9, 453.0, 32.76, null, null, '3/4 TURN'),
       ('20:00'::time, 44, 24, 15.5, 47, 461.7, 449.2, 463.3, 32.86, null, null, '3/4 TURN'),
-      ('20:30'::time, 45, 26, 16.2, 47, 450.2, 448.0, 462.6, 32.81, null, null, '3/4 TURN'), -- UNCERTAIN upstream/downstream after scribble.
+      ('20:30'::time, 45, 28, 16.2, 47, 450.2, 448.0, 462.6, 32.81, null, null, '3/4 TURN'), -- UNCERTAIN upstream/downstream after scribble.
       ('21:00'::time, 50, 33, 15.1, 47, 479.9, 477.5, 460.5, 32.71, null, null, '3/4 TURN'),
       ('21:30'::time, 54, 39, 15.7, 47, 453.7, 450.2, 453.7, 32.73, null, null, '3/4 TURN'),
-      ('22:00'::time, 50, 39, 13.7, 48, 455.6, 453.4, 460.6, 27.77, null, null, '3/4 TURN'), -- UNCERTAIN flowrate_m3hr/vfd_frequency_hz.
+      ('22:00'::time, 50, 39, 13.7, 42, 455.6, 453.4, 460.6, 27.77, null, null, '3/4 TURN'), -- UNCERTAIN flowrate_m3hr/vfd_frequency_hz.
       ('22:30'::time, 42, 35, 10.1, 38, 441.1, 434.9, 448.2, 24.08, null, 51432, '3/4 TURN'), -- UNCERTAIN vfd_frequency_hz.
       ('23:00'::time, 45, 40, 9.4, 38, 449.4, 443.2, 456.5, 24.07, null, null, '3/4 TURN'),
       ('23:30'::time, 45, 40, 8.2, 38, 449.3, 443.2, 455.5, 24.08, null, null, '3/4 TURN')

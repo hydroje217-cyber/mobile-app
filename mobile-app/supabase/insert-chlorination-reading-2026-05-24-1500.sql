@@ -54,8 +54,7 @@ begin
     ph,
     tds_ppm,
     tank_level_liters,
-    flowrate_m3hr,
-    chlorination_power_kwh
+    flowrate_m3hr
   )
   values (
     target_site_id,
@@ -66,13 +65,12 @@ begin
     'NORMAL',
     62000.9,
     28,
-    0.656,
+    0.556,
     0.045,
     7.30,
     null,
     155,
-    16.1,
-    1429.1
+    16.1
   )
   on conflict (site_id, slot_datetime)
   do update set
