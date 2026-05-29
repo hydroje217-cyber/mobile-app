@@ -93,15 +93,29 @@ function startOfTodayIso() {
   return start.toISOString();
 }
 
-function startOfPreviousNightIso() {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23);
+function localDateFromValue(value = new Date()) {
+  if (value instanceof Date) {
+    return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  }
+
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? localDateFromValue(new Date()) : new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+}
+
+function startOfPreviousNightIso(value = new Date()) {
+  const date = localDateFromValue(value);
+  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate() - 1, 23);
   return start.toISOString();
 }
 
-function startOfTomorrowIso() {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+function startOfTomorrowIso(value = new Date()) {
+  const date = localDateFromValue(value);
+  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1);
   return start.toISOString();
 }
 
@@ -330,12 +344,12 @@ export async function getDailyProductionForMonth({ year, monthIndex }) {
   });
 }
 
-export async function getOfficeDashboardSnapshot({ limit = 12, includeLoginLogs = false } = {}) {
+export async function getOfficeDashboardSnapshot({ limit = 12, includeLoginLogs = false, checkpointDate } = {}) {
   requireSupabase();
 
   const todayIso = startOfTodayIso();
-  const slotQueryStartIso = startOfPreviousNightIso();
-  const tomorrowIso = startOfTomorrowIso();
+  const slotQueryStartIso = startOfPreviousNightIso(checkpointDate);
+  const tomorrowIso = startOfTomorrowIso(checkpointDate);
   const [
     pendingApprovalsResult,
     totalOperatorsResult,

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Animated, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import LottieView from 'lottie-react-native';
 import Card from '../components/Card';
 import MessageBanner from '../components/MessageBanner';
@@ -109,6 +110,60 @@ function formatMaybeTimestamp(value) {
 
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : formatTimestamp(parsed);
+}
+
+function formatDateValue(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function parseDateValue(value) {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = new Date(`${value}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatCheckpointDateLabel(value) {
+  const parsed = parseDateValue(value);
+  if (!parsed) {
+    return 'Select date';
+  }
+
+  return parsed.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+function CheckpointDateField({ label, value, placeholder, onPress }) {
+  const { palette, isDark } = useTheme();
+  const { width } = useWindowDimensions();
+  const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
+  const fieldStyles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
+
+  return (
+    <View style={fieldStyles.filterField}>
+      <Text style={fieldStyles.filterLabel}>{label}</Text>
+      <Pressable onPress={onPress} style={[fieldStyles.dateField, fieldStyles.compactDateField]}>
+        <View style={fieldStyles.inputRow}>
+          <View style={fieldStyles.inputIconWrap}>
+            <Ionicons name="calendar-outline" size={15} color={palette.ink500} />
+          </View>
+          <Text
+            numberOfLines={1}
+            ellipsizeMode="tail"
+            style={[fieldStyles.dateFieldValue, fieldStyles.compactDateFieldValue, !value && fieldStyles.dateFieldPlaceholder]}
+          >
+            {value || placeholder}
+          </Text>
+          <Ionicons name="chevron-down" size={14} color={palette.ink500} />
+        </View>
+      </Pressable>
+    </View>
+  );
 }
 
 function formatRelativeTime(value, now = Date.now()) {
@@ -268,18 +323,18 @@ function getWindowDayOffset(window, now = new Date()) {
   return isBeforeTonightCShift && isPreviousNightSlot ? -1 : 0;
 }
 
-function buildSlotTimeline({ sites = [], readings = [], typeFilter = 'all', now = new Date() }) {
+function buildSlotTimeline({ sites = [], readings = [], typeFilter = 'all', now = new Date(), timelineDate = now }) {
   const filteredSites = sites.filter((site) => {
     return typeFilter === 'all' || String(site.type || '').toLowerCase() === typeFilter;
   });
 
   return SLOT_WINDOWS.map((window) => {
-    const dayOffset = getWindowDayOffset(window, now);
+    const dayOffset = getWindowDayOffset(window, timelineDate);
     const windowWithDates = {
       ...window,
       dayOffset,
-      windowStart: createSlotTime(window.startMinutes, now, dayOffset),
-      windowEnd: createSlotTime(window.endMinutes, now, dayOffset),
+      windowStart: createSlotTime(window.startMinutes, timelineDate, dayOffset),
+      windowEnd: createSlotTime(window.endMinutes, timelineDate, dayOffset),
     };
     const checkpoints = filteredSites.map((site) => {
       const reading = findReadingForWindow(readings, site, windowWithDates);
@@ -730,9 +785,11 @@ function NotificationCenter({
   palette,
 }) {
   const [visibleNotificationLimit, setVisibleNotificationLimit] = useState(NOTIFICATION_PREVIEW_LIMIT);
+  const [openNotificationMenuKey, setOpenNotificationMenuKey] = useState('');
 
   useEffect(() => {
     setVisibleNotificationLimit(NOTIFICATION_PREVIEW_LIMIT);
+    setOpenNotificationMenuKey('');
   }, [filter, notifications.length]);
 
   const visibleNotifications = notifications.slice(0, visibleNotificationLimit);
@@ -789,8 +846,14 @@ function NotificationCenter({
               key={item.key}
               item={item}
               unread={!readMap[item.key]}
+              menuOpen={openNotificationMenuKey === item.key}
+              onToggleMenu={() => setOpenNotificationMenuKey((current) => (current === item.key ? '' : item.key))}
               onPress={onPressNotification}
-              onDelete={onDeleteNotification}
+              palette={palette}
+              onDelete={(notification) => {
+                setOpenNotificationMenuKey('');
+                onDeleteNotification?.(notification);
+              }}
             />
           ))
         ) : (
@@ -833,8 +896,7 @@ function NotificationCenter({
   );
 }
 
-function NotificationCard({ item, unread, onPress, onDelete }) {
-  const [menuOpen, setMenuOpen] = useState(false);
+function NotificationCard({ item, unread, menuOpen, onToggleMenu, onPress, onDelete, palette }) {
   const toneStyle = {
     success: styles.notificationCardSuccess,
     warning: styles.notificationCardWarning,
@@ -884,21 +946,24 @@ function NotificationCard({ item, unread, onPress, onDelete }) {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`More options for ${item.title}`}
-          onPress={() => setMenuOpen((current) => !current)}
+          onPress={(event) => {
+            event.stopPropagation?.();
+            onToggleMenu?.();
+          }}
           style={({ pressed }) => [
             styles.notificationKebabButton,
             pressed && styles.quickActionPressed,
           ]}
         >
-          <Ionicons name="ellipsis-horizontal" size={17} color="#FFFFFF" />
+          <Ionicons name="ellipsis-vertical" size={18} color={palette.ink700} />
         </Pressable>
         {menuOpen ? (
           <View style={styles.notificationMenu}>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={`Delete ${item.title} notification`}
-              onPress={() => {
-                setMenuOpen(false);
+              onPress={(event) => {
+                event.stopPropagation?.();
                 onDelete?.(item);
               }}
               style={({ pressed }) => [
@@ -1131,6 +1196,8 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [shiftFilter, setShiftFilter] = useState('current');
+  const [checkpointDate, setCheckpointDate] = useState(() => formatDateValue(new Date()));
+  const [checkpointDatePickerOpen, setCheckpointDatePickerOpen] = useState(false);
   const [selectedCheckpoint, setSelectedCheckpoint] = useState(null);
   const [notificationFilter, setNotificationFilter] = useState('alerts');
   const [readNotificationKeys, setReadNotificationKeys] = useState({});
@@ -1179,13 +1246,16 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
     ]).slice(0, 30));
   }
 
-  async function loadDashboard({ silent = false, successMessage = '' } = {}) {
+  async function loadDashboard({ silent = false, successMessage = '', checkpointDateValue = checkpointDate } = {}) {
     if (!silent) {
       setLoading(true);
     }
 
     try {
-      const nextDashboard = await getOfficeDashboardSnapshot({ includeLoginLogs: canManageAccounts });
+      const nextDashboard = await getOfficeDashboardSnapshot({
+        includeLoginLogs: canManageAccounts,
+        checkpointDate: checkpointDateValue,
+      });
       setDashboard(nextDashboard);
       setLastUpdatedAt(new Date());
 
@@ -1279,6 +1349,28 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
     }
   }
 
+  async function handleCheckpointDateChange(nextDateValue) {
+    setCheckpointDate(nextDateValue);
+    if (nextDateValue !== formatDateValue(new Date()) && shiftFilter === 'current') {
+      setShiftFilter('all');
+    }
+    setSelectedCheckpoint(null);
+    await loadDashboard({
+      checkpointDateValue: nextDateValue,
+      successMessage: `30-minute checkpoints are showing ${formatCheckpointDateLabel(nextDateValue)}.`,
+    });
+  }
+
+  function handleNativeCheckpointDateChange(_event, selectedDate) {
+    setCheckpointDatePickerOpen(false);
+
+    if (!selectedDate) {
+      return;
+    }
+
+    handleCheckpointDateChange(formatDateValue(selectedDate));
+  }
+
   useEffect(() => {
     loadDashboard();
   }, []);
@@ -1293,7 +1385,7 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
     }, 60000);
 
     return () => clearInterval(intervalId);
-  }, [canManageAccounts]);
+  }, [canManageAccounts, checkpointDate]);
 
   useEffect(() => {
     if (!supabase || !OFFICE_MONITOR_ROLES.includes(profile?.role)) {
@@ -1325,7 +1417,7 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [profile?.role]);
+  }, [checkpointDate, profile?.role]);
 
   useEffect(() => {
     if (!dashboard.pendingApprovals.length) {
@@ -1437,11 +1529,12 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
           readings: dashboard.todaySlotReadings,
           typeFilter: recentReadingFilter,
           now: currentTime,
+          timelineDate: parseDateValue(checkpointDate) || currentTime,
         }),
         currentTime,
         shiftFilter
       ),
-    [currentTime, dashboard.sites, dashboard.todaySlotReadings, recentReadingFilter, shiftFilter]
+    [checkpointDate, currentTime, dashboard.sites, dashboard.todaySlotReadings, recentReadingFilter, shiftFilter]
   );
 
   const expectedSlotTimeline = useMemo(
@@ -1452,11 +1545,12 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
           readings: dashboard.todaySlotReadings,
           typeFilter: recentReadingFilter,
           now: currentTime,
+          timelineDate: parseDateValue(checkpointDate) || currentTime,
         }),
         shiftFilter,
         currentTime
       ),
-    [currentTime, dashboard.sites, dashboard.todaySlotReadings, recentReadingFilter, shiftFilter]
+    [checkpointDate, currentTime, dashboard.sites, dashboard.todaySlotReadings, recentReadingFilter, shiftFilter]
   );
 
   const slotSummary = useMemo(() => summarizeTimelineSlots(slotTimeline), [slotTimeline]);
@@ -1685,10 +1779,38 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
         <Card style={styles.panelCard}>
           <SectionHeader
             title="30-minute checkpoints"
-            body="Current slot appears first. Future slots are counted in Upcoming, not shown below."
+            body="Choose a checkpoint date, then review each 30-minute site reading by slot."
             iconName="checkmark-done-outline"
             iconColor={palette.teal600}
           />
+
+          <View style={styles.checkpointDateGroup}>
+            <View style={styles.checkpointDateRow}>
+              <View style={styles.checkpointDateField}>
+                <CheckpointDateField
+                  label="Checkpoint date"
+                  value={checkpointDate}
+                  placeholder="Select date"
+                  onPress={() => setCheckpointDatePickerOpen(true)}
+                />
+              </View>
+              <Pressable
+                onPress={() => handleCheckpointDateChange(formatDateValue(new Date()))}
+                style={styles.checkpointTodayButton}
+                accessibilityLabel="Show today's checkpoints"
+              >
+                <Text style={styles.checkpointTodayButtonText}>Today</Text>
+              </Pressable>
+            </View>
+            {checkpointDatePickerOpen && Platform.OS !== 'web' ? (
+              <DateTimePicker
+                value={parseDateValue(checkpointDate) || new Date()}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={handleNativeCheckpointDateChange}
+              />
+            ) : null}
+          </View>
 
           <View style={styles.recentReadingControlGroup}>
             <Text style={styles.recentReadingGroupLabel}>Site type</Text>
@@ -3309,6 +3431,86 @@ function createStyles(palette, isDark, responsiveMetrics) {
     flexWrap: 'wrap',
     gap: 6,
   },
+  checkpointDateGroup: {
+    gap: 6,
+    marginBottom: 8,
+  },
+  checkpointDateRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  checkpointDateField: {
+    minWidth: 180,
+    flexBasis: 180,
+    flexGrow: 1,
+  },
+  filterField: {
+    gap: 6,
+  },
+  filterLabel: {
+    color: palette.ink500,
+    fontSize: 10,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  dateField: {
+    minHeight: 44,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.lineStrong,
+    backgroundColor: isDark ? '#0C1621' : '#F9FCFF',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    justifyContent: 'center',
+  },
+  compactDateField: {
+    minHeight: 38,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+    borderRadius: 12,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  inputIconWrap: {
+    width: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dateFieldValue: {
+    flex: 1,
+    flexShrink: 1,
+    color: palette.ink900,
+    fontSize: 13,
+  },
+  compactDateFieldValue: {
+    fontSize: 11,
+  },
+  dateFieldPlaceholder: {
+    color: palette.ink500,
+  },
+  checkpointTodayButton: {
+    minHeight: 38,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: palette.navy700,
+    borderWidth: 1,
+    borderColor: palette.cyan300,
+    marginBottom: 0,
+  },
+  checkpointTodayButtonText: {
+    color: palette.onAccent,
+    fontSize: 12,
+    fontWeight: '800',
+  },
   recentReadingFilterChip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3598,7 +3800,7 @@ function createStyles(palette, isDark, responsiveMetrics) {
   notificationUnreadDot: {
     position: 'absolute',
     top: 10,
-    right: 48,
+    right: 42,
     width: 8,
     height: 8,
     borderRadius: 999,
@@ -3627,12 +3829,12 @@ function createStyles(palette, isDark, responsiveMetrics) {
     flex: 1,
     minWidth: 0,
     gap: 5,
+    paddingRight: 34,
   },
   notificationCardTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingRight: 48,
     minWidth: 0,
   },
   notificationMenuWrap: {
@@ -3644,14 +3846,11 @@ function createStyles(palette, isDark, responsiveMetrics) {
     alignItems: 'flex-end',
   },
   notificationKebabButton: {
-    width: 34,
+    width: 28,
     height: 34,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: isDark ? '#34516C' : '#CAD8E8',
-    backgroundColor: isDark ? '#1F2937' : '#596579',
-    borderRadius: 999,
+    borderRadius: 8,
   },
   notificationMenu: {
     marginTop: 6,
