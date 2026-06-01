@@ -1,10 +1,10 @@
 import { supabase } from '../lib/supabase';
 
 const CHLORINATION_SELECT =
-  'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, remarks, totalizer, pressure_psi, rc_ppm, turbidity_ntu, ph, tds_ppm, tank_level_liters, flowrate_m3hr, chlorine_consumed, peroxide_consumption, chlorination_power_kwh, gps_latitude, gps_longitude, gps_accuracy_m, gps_distance_m, gps_verified, gps_checked_at, status, sites(id, name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)';
+  'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, remarks, operation_state, operation_note, operation_event_at, totalizer, pressure_psi, rc_ppm, turbidity_ntu, ph, tds_ppm, tank_level_liters, flowrate_m3hr, chlorine_consumed, peroxide_consumption, chlorination_power_kwh, gps_latitude, gps_longitude, gps_accuracy_m, gps_distance_m, gps_verified, gps_checked_at, status, sites(id, name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)';
 
 const DEEPWELL_SELECT =
-  'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, remarks, upstream_pressure_psi, downstream_pressure_psi, flowrate_m3hr, vfd_frequency_hz, voltage_l1_v, voltage_l2_v, voltage_l3_v, amperage_a, tds_ppm, power_kwh_shift, gps_latitude, gps_longitude, gps_accuracy_m, gps_distance_m, gps_verified, gps_checked_at, status, sites(id, name, type), submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)';
+  'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, remarks, operation_state, operation_note, operation_event_at, upstream_pressure_psi, downstream_pressure_psi, flowrate_m3hr, vfd_frequency_hz, voltage_l1_v, voltage_l2_v, voltage_l3_v, amperage_a, tds_ppm, power_kwh_shift, gps_latitude, gps_longitude, gps_accuracy_m, gps_distance_m, gps_verified, gps_checked_at, status, sites(id, name, type), submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)';
 
 const CHLORINATION_LEGACY_SELECT =
   'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, remarks, totalizer, pressure_psi, rc_ppm, turbidity_ntu, ph, tds_ppm, tank_level_liters, flowrate_m3hr, chlorine_consumed, peroxide_consumption, chlorination_power_kwh, status, sites(id, name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)';
@@ -20,7 +20,7 @@ const READING_META = {
   CHLORINATION: {
     tableName: 'chlorination_readings',
     select:
-      'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, gps_latitude, gps_longitude, gps_accuracy_m, gps_distance_m, gps_verified, gps_checked_at, submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)',
+      'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, operation_state, operation_note, operation_event_at, gps_latitude, gps_longitude, gps_accuracy_m, gps_distance_m, gps_verified, gps_checked_at, submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)',
     legacySelect:
       'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)',
     listSelect: CHLORINATION_SELECT,
@@ -29,7 +29,7 @@ const READING_META = {
   DEEPWELL: {
     tableName: 'deepwell_readings',
     select:
-      'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, gps_latitude, gps_longitude, gps_accuracy_m, gps_distance_m, gps_verified, gps_checked_at, submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)',
+      'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, operation_state, operation_note, operation_event_at, gps_latitude, gps_longitude, gps_accuracy_m, gps_distance_m, gps_verified, gps_checked_at, submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)',
     legacySelect:
       'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)',
     listSelect: DEEPWELL_SELECT,
@@ -37,8 +37,8 @@ const READING_META = {
   },
 };
 
-function isMissingGpsColumnError(error) {
-  return /gps_|schema cache|could not find/i.test(error?.message || '');
+function isMissingOptionalColumnError(error) {
+  return /gps_|operation_|schema cache|could not find/i.test(error?.message || '');
 }
 
 function normalizeReading(row, siteType) {
@@ -101,7 +101,7 @@ async function fetchReadingPage({ meta, siteType, siteId, fromDate, toDate, from
     { siteId, fromDate, toDate }
   ).range(from, to);
 
-  if (error && isMissingGpsColumnError(error)) {
+  if (error && isMissingOptionalColumnError(error)) {
     const fallback = await applyReadingFilters(
       supabase.from(meta.tableName).select(meta.legacyListSelect),
       { siteId, fromDate, toDate }
@@ -268,7 +268,7 @@ export async function getReadingForSlot({ siteId, siteType, slotIso }) {
     .eq('slot_datetime', slotIso)
     .maybeSingle();
 
-  if (error && isMissingGpsColumnError(error)) {
+  if (error && isMissingOptionalColumnError(error)) {
     const fallback = await supabase
       .from(meta.tableName)
       .select(meta.legacySelect)
@@ -305,7 +305,7 @@ export async function getLatestReadingForSite({ siteId, siteType }) {
     .limit(1)
     .maybeSingle();
 
-  if (error && isMissingGpsColumnError(error)) {
+  if (error && isMissingOptionalColumnError(error)) {
     const fallback = await supabase
       .from(meta.tableName)
       .select(meta.legacySelect)
@@ -350,7 +350,7 @@ export async function listReadings({ siteId, siteType, fromDate, toDate, limit, 
       { siteId, fromDate, toDate, limit }
     );
 
-    if (error && isMissingGpsColumnError(error)) {
+    if (error && isMissingOptionalColumnError(error)) {
       const fallback = await applyReadingFilters(
         supabase.from('chlorination_readings').select(READING_META.CHLORINATION.legacyListSelect),
         { siteId, fromDate, toDate, limit }
@@ -372,7 +372,7 @@ export async function listReadings({ siteId, siteType, fromDate, toDate, limit, 
       { siteId, fromDate, toDate, limit }
     );
 
-    if (error && isMissingGpsColumnError(error)) {
+    if (error && isMissingOptionalColumnError(error)) {
       const fallback = await applyReadingFilters(
         supabase.from('deepwell_readings').select(READING_META.DEEPWELL.legacyListSelect),
         { siteId, fromDate, toDate, limit }
@@ -399,14 +399,14 @@ export async function listReadings({ siteId, siteType, fromDate, toDate, limit, 
     ),
   ]);
 
-  if (chlorinationResult.error && isMissingGpsColumnError(chlorinationResult.error)) {
+  if (chlorinationResult.error && isMissingOptionalColumnError(chlorinationResult.error)) {
     chlorinationResult = await applyReadingFilters(
       supabase.from('chlorination_readings').select(READING_META.CHLORINATION.legacyListSelect),
       { siteId, fromDate, toDate, limit }
     );
   }
 
-  if (deepwellResult.error && isMissingGpsColumnError(deepwellResult.error)) {
+  if (deepwellResult.error && isMissingOptionalColumnError(deepwellResult.error)) {
     deepwellResult = await applyReadingFilters(
       supabase.from('deepwell_readings').select(READING_META.DEEPWELL.legacyListSelect),
       { siteId, fromDate, toDate, limit }

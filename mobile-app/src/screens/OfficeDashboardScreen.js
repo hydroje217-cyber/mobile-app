@@ -291,10 +291,39 @@ function findReadingForWindow(readings, site, window) {
   });
 }
 
-function getCheckpointStatus(window, reading, now) {
+function getDeepwellOperationStateForWindow(operationEvents = [], window) {
+  const windowEndTime = window.windowEnd.getTime();
+  const latestEvent = operationEvents
+    .filter((event) => String(event.site_type || '').toUpperCase() === 'DEEPWELL')
+    .filter((event) => {
+      const createdAt = new Date(event.created_at).getTime();
+      return Number.isFinite(createdAt) && createdAt <= windowEndTime;
+    })
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+
+  return latestEvent?.state === 'shutdown' ? 'shutdown' : null;
+}
+
+function getCheckpointStatus(window, reading, now, operationEvents = []) {
   if (reading) {
+    if (reading.operation_state === 'shutdown') {
+      return 'shutdown';
+    }
+
+    if (reading.operation_state === 'resumed') {
+      return 'resumed';
+    }
+
+    if (getDeepwellOperationStateForWindow(operationEvents, window) === 'shutdown') {
+      return 'shutdown';
+    }
+
     const submittedAt = new Date(reading.created_at || reading.reading_datetime || reading.slot_datetime);
     return submittedAt > window.windowEnd ? 'late' : 'complete';
+  }
+
+  if (getDeepwellOperationStateForWindow(operationEvents, window) === 'shutdown') {
+    return 'shutdown';
   }
 
   if (now > window.windowEnd) {
@@ -323,7 +352,7 @@ function getWindowDayOffset(window, now = new Date()) {
   return isBeforeTonightCShift && isPreviousNightSlot ? -1 : 0;
 }
 
-function buildSlotTimeline({ sites = [], readings = [], typeFilter = 'all', now = new Date(), timelineDate = now }) {
+function buildSlotTimeline({ sites = [], readings = [], operationEvents = [], typeFilter = 'all', now = new Date(), timelineDate = now }) {
   const filteredSites = sites.filter((site) => {
     return typeFilter === 'all' || String(site.type || '').toLowerCase() === typeFilter;
   });
@@ -342,7 +371,7 @@ function buildSlotTimeline({ sites = [], readings = [], typeFilter = 'all', now 
         id: `${windowWithDates.key}:${site.id}`,
         site,
         reading,
-        status: getCheckpointStatus(windowWithDates, reading, now),
+        status: getCheckpointStatus(windowWithDates, reading, now, operationEvents),
       };
     });
 
@@ -367,6 +396,8 @@ function summarizeTimeline(timeline) {
     {
       total: 0,
       complete: 0,
+      shutdown: 0,
+      resumed: 0,
       due: 0,
       late: 0,
       missing: 0,
@@ -389,6 +420,8 @@ function summarizeTimelineSlots(timeline) {
     {
       total: 0,
       complete: 0,
+      shutdown: 0,
+      resumed: 0,
       due: 0,
       late: 0,
       missing: 0,
@@ -410,6 +443,14 @@ function getSlotAggregateStatus(slot) {
 
   if (statuses.includes('due')) {
     return 'due';
+  }
+
+  if (statuses.includes('shutdown')) {
+    return 'shutdown';
+  }
+
+  if (statuses.includes('resumed')) {
+    return 'resumed';
   }
 
   if (statuses.includes('late')) {
@@ -481,6 +522,10 @@ function getReadingSiteName(reading) {
 }
 
 function addOperationRangeAlert(alerts, reading, { field, label, min, max, unit = '' }) {
+  if (reading?.operation_state && reading.operation_state !== 'normal') {
+    return;
+  }
+
   const value = Number(reading?.[field]);
 
   if (!Number.isFinite(value) || (value >= min && value <= max)) {
@@ -498,6 +543,26 @@ function addOperationRangeAlert(alerts, reading, { field, label, min, max, unit 
     timestamp: reading?.created_at || reading?.reading_datetime || reading?.slot_datetime,
     reading,
     alertField: field,
+  });
+}
+
+function addOperationStateAlert(alerts, reading) {
+  if (!reading?.operation_state || reading.operation_state === 'normal') {
+    return;
+  }
+
+  const isShutdown = reading.operation_state === 'shutdown';
+  const siteName = getReadingSiteName(reading);
+  const slotText = formatMaybeTimestamp(reading?.slot_datetime || reading?.reading_datetime || reading?.created_at);
+  const note = reading.operation_note ? ` Note: ${reading.operation_note}` : '';
+
+  alerts.push({
+    key: `operation-state-${reading.id || reading.site_id}-${reading.operation_state}`,
+    severity: isShutdown ? 'critical' : 'info',
+    title: isShutdown ? 'Shutdown declared' : 'Operation resumed',
+    detail: `${siteName} ${isShutdown ? 'declared shutdown' : 'resumed operation'} for ${slotText}.${note}`,
+    timestamp: reading?.operation_event_at || reading?.created_at || reading?.reading_datetime || reading?.slot_datetime,
+    reading,
   });
 }
 
@@ -538,6 +603,8 @@ function buildOperationAlerts(dashboard, nowDate = new Date()) {
     .filter((reading) => getReadingTime(reading) <= now)
     .sort((a, b) => getReadingTime(b) - getReadingTime(a))
     .forEach((reading) => {
+      addOperationStateAlert(alerts, reading);
+
       (OPERATION_THRESHOLDS[reading.site_type] || []).forEach((threshold) => {
         addOperationRangeAlert(alerts, reading, threshold);
       });
@@ -1150,7 +1217,7 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
   const isAdmin = profile?.role === 'admin';
   const canManageAccounts = ACCOUNT_MANAGER_ROLES.includes(profile?.role);
   const requestedSection = initialSection || (profile?.role === 'general_manager' ? 'readings' : canManageAccounts ? 'overview' : 'readings');
-  const roleChoices = ['operator', 'supervisor', 'manager', 'general_manager', 'admin'];
+  const roleChoices = ['operator', 'test_operator', 'supervisor', 'manager', 'general_manager', 'admin'];
   const [activeSection, setActiveSection] = useState(requestedSection);
   const [dashboard, setDashboard] = useState({
     stats: {
@@ -1164,6 +1231,7 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
     recentReadings: [],
     sites: [],
     todaySlotReadings: [],
+    siteOperationEvents: [],
     profiles: [],
     loginLogs: [],
     monthlyProduction: {
@@ -1430,6 +1498,7 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
       { key: 'all', label: 'All', iconName: 'apps-outline' },
       { key: 'active', label: 'Active', iconName: 'radio-button-on' },
       { key: 'operator', label: 'Operators', iconName: 'construct-outline' },
+      { key: 'test_operator', label: 'Test Operators', iconName: 'flask-outline' },
       { key: 'supervisor', label: 'Supervisors', iconName: 'shield-checkmark-outline' },
       { key: 'manager', label: 'Managers', iconName: 'briefcase-outline' },
       { key: 'general_manager', label: 'General Managers', iconName: 'business-outline' },
@@ -1527,6 +1596,7 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
         buildSlotTimeline({
           sites: dashboard.sites,
           readings: dashboard.todaySlotReadings,
+          operationEvents: dashboard.siteOperationEvents,
           typeFilter: recentReadingFilter,
           now: currentTime,
           timelineDate: parseDateValue(checkpointDate) || currentTime,
@@ -1534,7 +1604,7 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
         currentTime,
         shiftFilter
       ),
-    [checkpointDate, currentTime, dashboard.sites, dashboard.todaySlotReadings, recentReadingFilter, shiftFilter]
+    [checkpointDate, currentTime, dashboard.sites, dashboard.siteOperationEvents, dashboard.todaySlotReadings, recentReadingFilter, shiftFilter]
   );
 
   const expectedSlotTimeline = useMemo(
@@ -1543,6 +1613,7 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
         buildSlotTimeline({
           sites: dashboard.sites,
           readings: dashboard.todaySlotReadings,
+          operationEvents: dashboard.siteOperationEvents,
           typeFilter: recentReadingFilter,
           now: currentTime,
           timelineDate: parseDateValue(checkpointDate) || currentTime,
@@ -1550,7 +1621,7 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
         shiftFilter,
         currentTime
       ),
-    [checkpointDate, currentTime, dashboard.sites, dashboard.todaySlotReadings, recentReadingFilter, shiftFilter]
+    [checkpointDate, currentTime, dashboard.sites, dashboard.siteOperationEvents, dashboard.todaySlotReadings, recentReadingFilter, shiftFilter]
   );
 
   const slotSummary = useMemo(() => summarizeTimelineSlots(slotTimeline), [slotTimeline]);
@@ -1768,6 +1839,8 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
   function renderSlotTimeline() {
     const statusMeta = {
       complete: { label: 'Done', iconName: 'checkmark-circle', style: styles.timelineStatusComplete },
+      shutdown: { label: 'Shutdown', iconName: 'power', style: styles.timelineStatusShutdown },
+      resumed: { label: 'Resumed', iconName: 'refresh-circle', style: styles.timelineStatusResumed },
       due: { label: 'Due now', iconName: 'radio-button-on', style: styles.timelineStatusDue },
       late: { label: 'Late', iconName: 'time', style: styles.timelineStatusLate },
       missing: { label: 'Missing', iconName: 'alert-circle', style: styles.timelineStatusMissing },
@@ -2075,6 +2148,15 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
                 <MessageBanner tone="info">No numeric values were saved for this reading.</MessageBanner>
               )}
 
+              {reading?.operation_state && reading.operation_state !== 'normal' ? (
+                <View style={styles.recordedRemarks}>
+                  <Text style={styles.recordedValueLabel}>
+                    {reading.operation_state === 'shutdown' ? 'Shutdown note' : 'Resume note'}
+                  </Text>
+                  <Text style={styles.recordedRemarksText}>{reading.operation_note || '-'}</Text>
+                </View>
+              ) : null}
+
               {reading?.remarks ? (
                 <View style={styles.recordedRemarks}>
                   <Text style={styles.recordedValueLabel}>Remarks</Text>
@@ -2193,7 +2275,9 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
                         </Text>
                       </View>
                       <View style={styles.statusBadge}>
-                        <Text style={styles.statusBadgeText}>{String(item.status || '-').toUpperCase()}</Text>
+                        <Text style={styles.statusBadgeText}>
+                          {String(item.operation_state && item.operation_state !== 'normal' ? item.operation_state : item.status || '-').toUpperCase()}
+                        </Text>
                       </View>
                     </View>
 
@@ -4060,6 +4144,14 @@ function createStyles(palette, isDark, responsiveMetrics) {
   timelineStatusComplete: {
     backgroundColor: isDark ? '#103228' : '#16A34A',
     borderColor: isDark ? '#2F8F72' : '#15803D',
+  },
+  timelineStatusShutdown: {
+    backgroundColor: isDark ? '#35121C' : '#B91C1C',
+    borderColor: isDark ? '#A84257' : '#7F1D1D',
+  },
+  timelineStatusResumed: {
+    backgroundColor: isDark ? '#172638' : '#2563EB',
+    borderColor: isDark ? '#31506E' : '#1D4ED8',
   },
   timelineStatusDue: {
     backgroundColor: isDark ? '#123A37' : '#0EA5A4',
