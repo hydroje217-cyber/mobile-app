@@ -3,6 +3,14 @@ const SHIFT_BATCH_SLOT_MINUTES = [
   15 * 60, // 1500H
   23 * 60, // 2300H
 ];
+const SHIFT_EDGE_SLOT_MINUTES = [
+  6 * 60 + 30, // C-Shift last reading
+  7 * 60, // A-Shift first reading
+  14 * 60 + 30, // A-Shift last reading
+  15 * 60, // B-Shift first reading
+  22 * 60 + 30, // B-Shift last reading
+  23 * 60, // C-Shift first reading
+];
 
 const DAY_MINUTES = 24 * 60;
 const ENTRY_WINDOW_START_MINUTES_BEFORE_SHIFT = 60;
@@ -48,6 +56,10 @@ export function isShiftBatchEntryWindow(input) {
     minutesUntilNextShift <= ENTRY_WINDOW_START_MINUTES_BEFORE_SHIFT &&
     minutesUntilNextShift >= ENTRY_WINDOW_END_MINUTES_BEFORE_SHIFT
   );
+}
+
+export function isShiftFirstOrLastReadingSlot(input) {
+  return SHIFT_EDGE_SLOT_MINUTES.includes(minutesSinceMidnight(input));
 }
 
 export function shiftNameForSlot(input) {

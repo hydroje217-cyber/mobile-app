@@ -27,7 +27,7 @@ import {
 } from '../utils/geofence';
 import { parseNullableNumber } from '../utils/readings';
 import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
-import { isShiftBatchEntryWindow, nextShiftBatchEntryText, shiftNameForSlot } from '../utils/shiftSchedule';
+import { isShiftBatchEntryWindow, isShiftFirstOrLastReadingSlot, nextShiftBatchEntryText, shiftNameForSlot } from '../utils/shiftSchedule';
 import { formatTimestamp, roundDownTo30MinSlot } from '../utils/time';
 import LottieView from 'lottie-react-native';
 
@@ -268,15 +268,18 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
   const isDeepwell = site?.type === 'DEEPWELL';
   const operationFeatureEnabled = isDeepwell;
   const shiftBatchEnabled = isShiftBatchEntryWindow(formSlot);
+  const shiftEdgeSlotEnabled = isShiftFirstOrLastReadingSlot(formSlot);
   const nextShiftBatchReadingText = nextShiftBatchEntryText(formSlot);
   const shiftBatchNoticeText = shiftBatchEnabled
     ? 'Open for this shift.'
     : 'Shift usage fields open during the hour before shift turnover.';
   const currentShiftLabel = shiftNameForSlot(formSlot);
   const isOperationEvent = operationFeatureEnabled && operationState !== 'normal';
+  const isShutdownEvent = isOperationEvent && operationState === 'shutdown';
+  const isResumeEvent = isOperationEvent && operationState === 'resumed';
   const operationModeLabel = OPERATION_LABELS[operationState] || OPERATION_LABELS.normal;
   const siteIsShutdown = latestOperationEvent?.state === 'shutdown';
-  const isOperationLockActive = isOperationEvent || siteIsShutdown;
+  const isOperationLockActive = !isResumeEvent && (isShutdownEvent || siteIsShutdown);
   const nextOperationState = siteIsShutdown ? 'resumed' : 'shutdown';
   const nextOperationLabel = siteIsShutdown ? 'Resume operation' : 'Declare shutdown';
   const latestOperationBy = latestOperationEvent?.created_profile?.full_name || latestOperationEvent?.created_profile?.email || 'operator';
@@ -286,7 +289,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
   const operationBoundaryFields = useMemo(() => {
     if (isChlorination) {
       return new Set([
-        ...CHLORINATION_OPERATION_BOUNDARY_FIELDS,
+        ...(shiftEdgeSlotEnabled ? CHLORINATION_OPERATION_BOUNDARY_FIELDS : []),
         ...(shiftBatchEnabled ? CHLORINATION_OPERATION_SHIFT_FIELDS : []),
       ]);
     }
@@ -298,14 +301,32 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
     }
 
     return new Set();
-  }, [isChlorination, isDeepwell, shiftBatchEnabled]);
+  }, [isChlorination, isDeepwell, shiftBatchEnabled, shiftEdgeSlotEnabled]);
   const operationLockedMessage = shiftBatchEnabled
     ? isDeepwell
       ? 'Only shift power and operation notes are editable for deepwell shutdown/resume records.'
-      : 'Only totalizer, shift usage, and operation notes are editable for chlorination shutdown/resume records.'
+      : shiftEdgeSlotEnabled
+        ? 'Totalizer is open for this shift edge. Shift usage also opens before turnover.'
+        : 'Chlorination readings are locked now. Totalizer opens on shift edges; usage opens before turnover.'
     : isDeepwell
       ? 'Deepwell measurements are locked now. Shift power opens near turnover.'
-      : 'Only totalizer and operation notes are editable now. Shift usage opens near turnover.';
+      : shiftEdgeSlotEnabled
+        ? 'Only totalizer is editable for chlorination shutdown records on first or last shift readings.'
+        : 'Chlorination readings are locked now. Totalizer opens on shift edges; usage opens before turnover.';
+  const operationEventMessage = isResumeEvent
+    ? 'Resume will be recorded with this checkpoint. Normal reading fields are open.'
+    : isShutdownEvent
+      ? operationLockedMessage
+      : latestOperationText;
+  const operationStatusLabel = isResumeEvent
+    ? 'Resume pending'
+    : siteIsShutdown
+      ? 'Currently shutdown'
+      : 'Currently running';
+  const operationTone = isResumeEvent ? 'resume' : siteIsShutdown ? 'shutdown' : 'running';
+  const operationActionTone = isOperationEvent ? 'cancel' : siteIsShutdown ? 'resume' : 'shutdown';
+  const operationActionIcon = isOperationEvent ? 'close-circle-outline' : siteIsShutdown ? 'refresh-circle-outline' : 'power-outline';
+  const operationActionIconColor = operationActionTone === 'cancel' ? palette.ink900 : palette.onAccent;
   const activeParameterFields = useMemo(() => {
     const filterOperationFields = (fields) =>
       isOperationLockActive ? fields.filter((field) => operationBoundaryFields.has(field.key)) : fields;
@@ -934,10 +955,17 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
       const peroxideConsumption = parseNullableNumber(chlorination.peroxideConsumption);
       const powerConsumptionKwh = parseNullableNumber(chlorination.powerConsumptionKwh);
 
+      if (isOperationLockActive && !shiftEdgeSlotEnabled && !isSubmitShiftBatchSlot) {
+        setResultTone('error');
+        setResultMessage('Chlorination is currently shutdown. Totalizer opens on first/last shift readings; usage opens before turnover.');
+        scrollToResultMessage();
+        return null;
+      }
+
       const requiredFields = isOperationLockActive
         ? [
-            ['chlorination.totalizer', 'Totalizer', totalizerVal],
-            ...(shiftBatchEnabled
+            ...(shiftEdgeSlotEnabled ? [['chlorination.totalizer', 'Totalizer', totalizerVal]] : []),
+            ...(isSubmitShiftBatchSlot
               ? [
                   ['chlorination.chlorineConsumed', 'Chlorine consumed (kg)', chlorineConsumed],
                   ['chlorination.peroxideConsumption', 'Peroxide consumption', peroxideConsumption],
@@ -962,7 +990,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
 
       const numericValues = isOperationLockActive
         ? [
-            totalizerVal,
+            ...(shiftEdgeSlotEnabled ? [totalizerVal] : []),
             ...(isSubmitShiftBatchSlot ? [chlorineConsumed, peroxideConsumption, powerConsumptionKwh] : []),
           ]
         : [
@@ -992,7 +1020,9 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
         return null;
       }
 
-      payload.totalizer = totalizerVal;
+      if (!isOperationLockActive || shiftEdgeSlotEnabled) {
+        payload.totalizer = totalizerVal;
+      }
       if (!isOperationLockActive) {
         if (pressure !== null) payload.pressure_psi = pressure;
         if (rc !== null) payload.rc_ppm = rc;
@@ -1518,50 +1548,100 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
         </Card>
 
         {operationFeatureEnabled ? (
-          <Card style={[styles.operationCard, isOperationEvent ? styles.operationCardActive : null]}>
+          <Card
+            style={[
+              styles.operationCard,
+              isShutdownEvent ? styles.operationCardActive : null,
+              isResumeEvent ? styles.operationCardResumeActive : null,
+            ]}
+          >
             <View style={styles.operationHeader}>
-              <View style={styles.operationIcon}>
-                <Ionicons name={siteIsShutdown ? 'power-outline' : 'pulse-outline'} size={18} color={palette.ink900} />
+              <View
+                style={[
+                  styles.operationIcon,
+                  operationTone === 'shutdown' ? styles.operationIconShutdown : null,
+                  operationTone === 'resume' ? styles.operationIconResume : null,
+                ]}
+              >
+                <Ionicons
+                  name={isResumeEvent ? 'refresh-circle-outline' : siteIsShutdown ? 'power-outline' : 'pulse-outline'}
+                  size={18}
+                  color={palette.ink900}
+                />
               </View>
               <View style={styles.operationCopy}>
-                <Text style={styles.operationTitle}>Operation state</Text>
+                <View style={styles.operationTitleRow}>
+                  <Text style={styles.operationTitle}>Operation state</Text>
+                  <View
+                    style={[
+                      styles.operationHeaderBadge,
+                      operationTone === 'shutdown' ? styles.operationHeaderBadgeShutdown : null,
+                      operationTone === 'resume' ? styles.operationHeaderBadgeResume : null,
+                    ]}
+                  >
+                    <Ionicons
+                      name={isResumeEvent ? 'refresh-circle' : siteIsShutdown ? 'power' : 'checkmark-circle'}
+                      size={12}
+                      color={palette.ink900}
+                    />
+                    <Text style={styles.operationHeaderBadgeText}>{operationStatusLabel}</Text>
+                  </View>
+                </View>
                 <Text style={styles.operationBody}>
-                  {isOperationEvent ? operationLockedMessage : latestOperationText}
+                  {operationEventMessage}
                 </Text>
               </View>
             </View>
-            <View style={styles.operationStatusRow}>
-              <View style={[styles.operationStatusPill, siteIsShutdown ? styles.operationStatusPillShutdown : styles.operationStatusPillRunning]}>
-                <Ionicons name={siteIsShutdown ? 'power' : 'checkmark-circle'} size={13} color={palette.ink900} />
-                <Text style={styles.operationStatusText}>{siteIsShutdown ? 'Currently shutdown' : 'Currently running'}</Text>
+            <View style={styles.operationScopeNote}>
+              <Ionicons name="git-branch-outline" size={14} color={palette.teal600} />
+              <Text style={styles.operationScopeText}>Deepwell controls chlorination shutdown status</Text>
+            </View>
+            <View style={styles.operationControlPanel}>
+              <View
+                style={[
+                  styles.operationStateTile,
+                  operationTone === 'shutdown' ? styles.operationStateTileShutdown : null,
+                  operationTone === 'resume' ? styles.operationStateTileResume : null,
+                ]}
+              >
+                <Text style={styles.operationStateLabel}>Current state</Text>
+                <View style={styles.operationStateValueRow}>
+                  <Ionicons
+                    name={isResumeEvent ? 'refresh-circle' : siteIsShutdown ? 'power' : 'checkmark-circle'}
+                    size={15}
+                    color={palette.ink900}
+                  />
+                  <Text style={styles.operationStateValue}>{operationStatusLabel}</Text>
+                </View>
               </View>
               <Pressable
                 onPress={handleOperationToggle}
                 disabled={operationLoading}
                 style={({ pressed }) => [
-                  styles.operationToggleButton,
-                  !siteIsShutdown && !isOperationEvent ? styles.operationToggleButtonDanger : null,
-                  isOperationEvent ? styles.operationToggleButtonSelected : null,
+                  styles.operationActionButton,
+                  operationActionTone === 'shutdown' ? styles.operationActionButtonShutdown : null,
+                  operationActionTone === 'resume' ? styles.operationActionButtonResume : null,
+                  operationActionTone === 'cancel' ? styles.operationActionButtonCancel : null,
                   pressed && !operationLoading ? styles.operationModeChipPressed : null,
-                  operationLoading ? styles.operationToggleButtonDisabled : null,
+                  operationLoading ? styles.operationActionButtonDisabled : null,
                 ]}
               >
                 <Ionicons
-                  name={isOperationEvent ? 'close-circle-outline' : siteIsShutdown ? 'refresh-circle-outline' : 'power-outline'}
+                  name={operationActionIcon}
                   size={15}
-                  color={isOperationEvent || (!siteIsShutdown && !isOperationEvent) ? palette.onAccent : palette.ink900}
+                  color={operationActionIconColor}
                 />
                 <Text
                   style={[
-                    styles.operationToggleText,
-                    isOperationEvent || (!siteIsShutdown && !isOperationEvent) ? styles.operationToggleTextSelected : null,
+                    styles.operationActionText,
+                    operationActionTone === 'cancel' ? styles.operationActionTextCancel : null,
                   ]}
                 >
                   {operationLoading ? 'Checking...' : isOperationEvent ? 'Cancel event' : nextOperationLabel}
                 </Text>
               </Pressable>
             </View>
-            {isOperationEvent && operationState === 'shutdown' ? (
+            {isShutdownEvent ? (
               <View style={styles.shutdownReasonWrap}>
                 <Text style={[styles.shutdownReasonLabel, fieldHasError('operationNote') ? styles.shutdownReasonLabelError : null]}>
                   Shutdown reason *
@@ -1614,7 +1694,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
 
         {isChlorination && siteIsShutdown ? (
           <MessageBanner tone="warning">
-            Deepwell has declared shutdown. Chlorination is locked to totalizer only; shift usage opens near turnover.
+            Deepwell has declared shutdown. Chlorination totalizer opens on first/last shift readings; usage fields still open before turnover.
           </MessageBanner>
         ) : null}
 
@@ -2273,13 +2353,17 @@ function createStyles(palette, isDark, responsiveMetrics) {
       fontWeight: '900',
     },
     operationCard: {
-      gap: 12,
-      backgroundColor: isDark ? '#102738' : '#F4FAFF',
+      gap: 13,
+      backgroundColor: isDark ? '#102738' : '#F2FAFF',
       borderColor: isDark ? '#235979' : '#C5E1F1',
     },
     operationCardActive: {
       backgroundColor: isDark ? '#30240F' : '#FFF8E8',
       borderColor: isDark ? '#6F561D' : '#E9C76F',
+    },
+    operationCardResumeActive: {
+      backgroundColor: isDark ? '#0F2D2A' : '#EAF9F4',
+      borderColor: isDark ? '#247066' : '#8EDBC6',
     },
     operationHeader: {
       flexDirection: 'row',
@@ -2296,9 +2380,25 @@ function createStyles(palette, isDark, responsiveMetrics) {
       borderWidth: 1,
       borderColor: isDark ? '#2A7694' : '#B6DDEB',
     },
+    operationIconShutdown: {
+      backgroundColor: isDark ? '#3B1D25' : '#FFF0F2',
+      borderColor: isDark ? '#884653' : '#E7A2AD',
+    },
+    operationIconResume: {
+      backgroundColor: isDark ? '#123A37' : '#E8F8F4',
+      borderColor: isDark ? '#1A655E' : '#9ADFC8',
+    },
     operationCopy: {
       flex: 1,
-      gap: 2,
+      gap: 4,
+      minWidth: 0,
+    },
+    operationTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      flexWrap: 'wrap',
+      gap: 8,
     },
     operationTitle: {
       color: palette.ink900,
@@ -2309,6 +2409,132 @@ function createStyles(palette, isDark, responsiveMetrics) {
       color: palette.ink700,
       fontSize: 12,
       lineHeight: 18,
+    },
+    operationHeaderBadge: {
+      minHeight: 26,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: isDark ? '#1A655E' : '#9ADFC8',
+      backgroundColor: isDark ? '#112B24' : '#E7F8F1',
+      paddingHorizontal: 9,
+      paddingVertical: 5,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 5,
+    },
+    operationHeaderBadgeShutdown: {
+      borderColor: isDark ? '#A84257' : '#F0AAB4',
+      backgroundColor: isDark ? '#35121C' : '#FFF0F2',
+    },
+    operationHeaderBadgeResume: {
+      borderColor: isDark ? '#1A655E' : '#9ADFC8',
+      backgroundColor: isDark ? '#123A37' : '#E8F8F4',
+    },
+    operationHeaderBadgeText: {
+      color: palette.ink900,
+      fontSize: 10,
+      fontWeight: '900',
+    },
+    operationScopeNote: {
+      minHeight: 34,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: isDark ? '#255B72' : '#BFE2F0',
+      backgroundColor: isDark ? '#0B2232' : '#EAF7FE',
+      paddingHorizontal: 11,
+      paddingVertical: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+    },
+    operationScopeText: {
+      flex: 1,
+      color: palette.ink700,
+      fontSize: 11,
+      fontWeight: '800',
+      lineHeight: 15,
+    },
+    operationControlPanel: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'stretch',
+      gap: 9,
+    },
+    operationStateTile: {
+      minHeight: 54,
+      flexGrow: 1,
+      flexBasis: 148,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: isDark ? '#1A655E' : '#9ADFC8',
+      backgroundColor: isDark ? '#112B24' : '#E7F8F1',
+      paddingHorizontal: 13,
+      paddingVertical: 10,
+      justifyContent: 'center',
+      gap: 5,
+    },
+    operationStateTileShutdown: {
+      borderColor: isDark ? '#A84257' : '#F0AAB4',
+      backgroundColor: isDark ? '#35121C' : '#FFF0F2',
+    },
+    operationStateTileResume: {
+      borderColor: isDark ? '#1A655E' : '#9ADFC8',
+      backgroundColor: isDark ? '#123A37' : '#E8F8F4',
+    },
+    operationStateLabel: {
+      color: palette.ink500,
+      fontSize: 9,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+    },
+    operationStateValueRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    operationStateValue: {
+      flex: 1,
+      color: palette.ink900,
+      fontSize: 12,
+      fontWeight: '900',
+    },
+    operationActionButton: {
+      minHeight: 54,
+      flexGrow: 1,
+      flexBasis: 148,
+      borderRadius: 16,
+      borderWidth: 1,
+      paddingHorizontal: 13,
+      paddingVertical: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 7,
+    },
+    operationActionButtonShutdown: {
+      borderColor: isDark ? '#8A4B56' : '#D8A0A8',
+      backgroundColor: isDark ? '#5A2631' : '#C75D6B',
+    },
+    operationActionButtonResume: {
+      borderColor: isDark ? '#1A655E' : '#0D9488',
+      backgroundColor: palette.teal600,
+    },
+    operationActionButtonCancel: {
+      borderColor: isDark ? '#31506E' : '#C4D6E8',
+      backgroundColor: isDark ? '#101C28' : '#FFFFFF',
+    },
+    operationActionButtonDisabled: {
+      opacity: 0.62,
+    },
+    operationActionText: {
+      color: palette.onAccent,
+      fontSize: 12,
+      fontWeight: '900',
+    },
+    operationActionTextCancel: {
+      color: palette.ink900,
     },
     operationModeRow: {
       flexDirection: 'row',
@@ -2340,6 +2566,10 @@ function createStyles(palette, isDark, responsiveMetrics) {
     operationStatusPillShutdown: {
       backgroundColor: isDark ? '#35121C' : '#FFF0F2',
       borderColor: isDark ? '#A84257' : '#F0AAB4',
+    },
+    operationStatusPillResume: {
+      backgroundColor: isDark ? '#123A37' : '#E8F8F4',
+      borderColor: isDark ? '#1A655E' : '#9ADFC8',
     },
     operationStatusText: {
       color: palette.ink900,
