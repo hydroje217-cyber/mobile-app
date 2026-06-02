@@ -16,6 +16,7 @@ import {
 } from '../services/offlineReadings';
 import { clearReadingDraft, loadReadingDraft, saveReadingDraft } from '../services/readingDrafts';
 import { createReading, getLatestReadingForSite, getReadingForSlot, updateReading } from '../services/readings';
+import { createSiteOperationEvent, getLatestDeepwellOperationEvent } from '../services/siteOperations';
 import {
   buildGpsPayload,
   evaluateSiteGeofence,
@@ -73,6 +74,26 @@ const DEEPWELL_BASE_FIELDS = [
   'tds',
 ];
 
+const OPERATION_LABELS = {
+  normal: 'Normal operation',
+  shutdown: 'Shutdown declared',
+  resumed: 'Resume operation',
+};
+const SHUTDOWN_REASONS = [
+  'Low Voltage',
+  'Power Interruption',
+  'Scheduled Shutdown',
+  'Maintenance Shutdown',
+  'Emergency Shutdown',
+];
+const CHLORINATION_OPERATION_BOUNDARY_FIELDS = ['chlorination.totalizer'];
+const CHLORINATION_OPERATION_SHIFT_FIELDS = [
+  'chlorination.chlorineConsumed',
+  'chlorination.peroxideConsumption',
+  'chlorination.powerConsumptionKwh',
+];
+const DEEPWELL_OPERATION_SHIFT_FIELDS = ['deepwell.powerKwhShift'];
+
 function readingOperatorName(reading) {
   return reading?.submitted_profile?.full_name || reading?.submitted_profile?.email || 'another operator';
 }
@@ -119,6 +140,8 @@ function formValue(value) {
 function buildEditFormState(reading) {
   return {
     remarks: reading?.remarks || '',
+    operationState: reading?.operation_state || 'normal',
+    operationNote: reading?.operation_note || '',
     chlorination: {
       totalizer: formValue(reading?.totalizer),
       pressure: formValue(reading?.pressure_psi),
@@ -160,7 +183,7 @@ function isReadingEditWindowOpen(reading, now = new Date()) {
   return now.getTime() - savedTime < EDIT_WINDOW_MS;
 }
 
-export default function SubmitReadingScreen({ navigation, site, editingReading, editReturnParams }) {
+export default function SubmitReadingScreen({ navigation, site, editingReading, editReturnParams, previewOnly = false }) {
   const { profile } = useAuth();
   const { palette, isDark } = useTheme();
   const { width } = useWindowDimensions();
@@ -169,6 +192,9 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
   const fieldRefs = useRef({});
   const screenScrollRef = useRef(null);
   const [remarks, setRemarks] = useState('');
+  const [operationState, setOperationState] = useState('normal');
+  const [operationNote, setOperationNote] = useState('');
+  const [shutdownReasonOpen, setShutdownReasonOpen] = useState(false);
   const [chlorination, setChlorination] = useState(initialChlorinationState);
   const [deepwell, setDeepwell] = useState(initialDeepwellState);
   const [submitting, setSubmitting] = useState(false);
@@ -189,6 +215,8 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
   const [slotStatusLoading, setSlotStatusLoading] = useState(false);
   const [duplicateReading, setDuplicateReading] = useState(null);
   const [latestReading, setLatestReading] = useState(null);
+  const [latestOperationEvent, setLatestOperationEvent] = useState(null);
+  const [operationLoading, setOperationLoading] = useState(false);
   const [geofenceStatus, setGeofenceStatus] = useState(null);
   const [pendingSubmission, setPendingSubmission] = useState(null);
   const [draftReady, setDraftReady] = useState(false);
@@ -238,15 +266,52 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
   const editWindowOpen = !isEditingReading || canBypassEditTimer || isReadingEditWindowOpen(editingReading, editNow);
   const isChlorination = site?.type === 'CHLORINATION';
   const isDeepwell = site?.type === 'DEEPWELL';
+  const operationFeatureEnabled = isDeepwell;
   const shiftBatchEnabled = isShiftBatchEntryWindow(formSlot);
   const nextShiftBatchReadingText = nextShiftBatchEntryText(formSlot);
   const shiftBatchNoticeText = shiftBatchEnabled
     ? 'Open for this shift.'
     : 'Shift usage fields open during the hour before shift turnover.';
   const currentShiftLabel = shiftNameForSlot(formSlot);
-  const activeParameterFields = useMemo(() => {
+  const isOperationEvent = operationFeatureEnabled && operationState !== 'normal';
+  const operationModeLabel = OPERATION_LABELS[operationState] || OPERATION_LABELS.normal;
+  const siteIsShutdown = latestOperationEvent?.state === 'shutdown';
+  const isOperationLockActive = isOperationEvent || siteIsShutdown;
+  const nextOperationState = siteIsShutdown ? 'resumed' : 'shutdown';
+  const nextOperationLabel = siteIsShutdown ? 'Resume operation' : 'Declare shutdown';
+  const latestOperationBy = latestOperationEvent?.created_profile?.full_name || latestOperationEvent?.created_profile?.email || 'operator';
+  const latestOperationText = latestOperationEvent
+    ? `${siteIsShutdown ? 'Shutdown' : 'Resumed'} by ${latestOperationBy} at ${formatTimestamp(new Date(latestOperationEvent.created_at))}`
+    : 'No shutdown or resume event has been recorded by Deepwell.';
+  const operationBoundaryFields = useMemo(() => {
     if (isChlorination) {
-      return [
+      return new Set([
+        ...CHLORINATION_OPERATION_BOUNDARY_FIELDS,
+        ...(shiftBatchEnabled ? CHLORINATION_OPERATION_SHIFT_FIELDS : []),
+      ]);
+    }
+
+    if (isDeepwell) {
+      return new Set([
+        ...(shiftBatchEnabled ? DEEPWELL_OPERATION_SHIFT_FIELDS : []),
+      ]);
+    }
+
+    return new Set();
+  }, [isChlorination, isDeepwell, shiftBatchEnabled]);
+  const operationLockedMessage = shiftBatchEnabled
+    ? isDeepwell
+      ? 'Only shift power and operation notes are editable for deepwell shutdown/resume records.'
+      : 'Only totalizer, shift usage, and operation notes are editable for chlorination shutdown/resume records.'
+    : isDeepwell
+      ? 'Deepwell measurements are locked now. Shift power opens near turnover.'
+      : 'Only totalizer and operation notes are editable now. Shift usage opens near turnover.';
+  const activeParameterFields = useMemo(() => {
+    const filterOperationFields = (fields) =>
+      isOperationLockActive ? fields.filter((field) => operationBoundaryFields.has(field.key)) : fields;
+
+    if (isChlorination) {
+      return filterOperationFields([
         ...CHLORINATION_BASE_FIELDS.map((key) => ({
           key: `chlorination.${key}`,
           value: chlorination[key],
@@ -257,11 +322,11 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
               value: chlorination[key],
             }))
           : []),
-      ];
+      ]);
     }
 
     if (isDeepwell) {
-      return [
+      return filterOperationFields([
         ...DEEPWELL_BASE_FIELDS.map((key) => ({
           key: `deepwell.${key}`,
           value: deepwell[key],
@@ -269,11 +334,11 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
         ...(shiftBatchEnabled
           ? [{ key: 'deepwell.powerKwhShift', value: deepwell.powerKwhShift }]
           : []),
-      ];
+      ]);
     }
 
     return [];
-  }, [chlorination, deepwell, isChlorination, isDeepwell, shiftBatchEnabled]);
+  }, [chlorination, deepwell, isChlorination, isDeepwell, isOperationLockActive, operationBoundaryFields, shiftBatchEnabled]);
   const completionProgress = useMemo(() => {
     const completed = activeParameterFields.filter((field) => String(field.value ?? '').trim()).length;
 
@@ -299,6 +364,8 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
         setChlorination({ ...initialChlorinationState, ...editState.chlorination });
         setDeepwell({ ...initialDeepwellState, ...editState.deepwell });
         setRemarks(editState.remarks);
+        setOperationState(editState.operationState);
+        setOperationNote(editState.operationNote);
         setResultTone(editWindowOpen ? 'info' : 'error');
         setResultMessage(
           editWindowOpen
@@ -319,6 +386,8 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
       setChlorination({ ...initialChlorinationState, ...(draft?.chlorination || {}) });
       setDeepwell({ ...initialDeepwellState, ...(draft?.deepwell || {}) });
       setRemarks(typeof draft?.remarks === 'string' ? draft.remarks : '');
+      setOperationState(draft?.operationState || 'normal');
+      setOperationNote(typeof draft?.operationNote === 'string' ? draft.operationNote : '');
 
       if (draft?.saved_at) {
         setResultTone('info');
@@ -343,6 +412,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
     const timeoutId = setTimeout(() => {
       const hasDraftContent = [
         remarks,
+        operationNote,
         ...Object.values(chlorination),
         ...Object.values(deepwell),
       ].some((value) => String(value ?? '').trim());
@@ -354,17 +424,32 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
 
       saveReadingDraft(site, {
         remarks,
+        operationState,
+        operationNote,
         chlorination,
         deepwell,
       });
     }, 350);
 
     return () => clearTimeout(timeoutId);
-  }, [chlorination, deepwell, draftReady, isEditingReading, remarks, site?.id, site?.type]);
+  }, [chlorination, deepwell, draftReady, isEditingReading, operationNote, operationState, remarks, site?.id, site?.type]);
 
   useEffect(() => {
     refreshSlotStatus(formSlot);
   }, [editingReading?.id, formSlot, site?.id, site?.type]);
+
+  useEffect(() => {
+    refreshLatestOperationEvent();
+  }, [isChlorination, operationFeatureEnabled, site?.id, site?.type]);
+
+  useEffect(() => {
+    if (operationFeatureEnabled) {
+      return;
+    }
+
+    setOperationState('normal');
+    setOperationNote('');
+  }, [operationFeatureEnabled]);
 
   useEffect(() => {
     const intervalId = setInterval(() => {
@@ -437,6 +522,36 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
   function patchDeepwell(key, value) {
     setDeepwell((current) => ({ ...current, [key]: value }));
     clearInvalidField(`deepwell.${key}`);
+  }
+
+  function handleOperationToggle() {
+    if (!operationFeatureEnabled) {
+      return;
+    }
+
+    setOperationState((current) => (current === nextOperationState ? 'normal' : nextOperationState));
+    setOperationNote('');
+    setShutdownReasonOpen(false);
+    clearInvalidField('operationNote');
+  }
+
+  function handleOperationNoteChange(value) {
+    setOperationNote(value);
+    clearInvalidField('operationNote');
+  }
+
+  function handleShutdownReasonSelect(reason) {
+    setOperationNote(reason);
+    setShutdownReasonOpen(false);
+    clearInvalidField('operationNote');
+  }
+
+  function canEditMeasurementField(fieldKey, baseEditable = true) {
+    if (!baseEditable) {
+      return false;
+    }
+
+    return !isOperationLockActive || operationBoundaryFields.has(fieldKey);
   }
 
   function setFieldRef(key, ref) {
@@ -539,8 +654,31 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
     setOfflineCount(nextCount);
   }
 
+  async function refreshLatestOperationEvent() {
+    if (!site?.type || (!operationFeatureEnabled && !isChlorination)) {
+      setLatestOperationEvent(null);
+      return;
+    }
+
+    setOperationLoading(true);
+    try {
+      const event = await getLatestDeepwellOperationEvent();
+      setLatestOperationEvent(event);
+    } catch (error) {
+      if (!isLikelyOfflineError(error)) {
+        setResultTone('error');
+        setResultMessage(error.message || 'Failed to load operation state.');
+      }
+      setLatestOperationEvent(null);
+    } finally {
+      setOperationLoading(false);
+    }
+  }
+
   async function clearForm() {
     setRemarks('');
+    setOperationState('normal');
+    setOperationNote('');
     setChlorination(initialChlorinationState);
     setDeepwell(initialDeepwellState);
     setInvalidFields(new Set());
@@ -720,6 +858,21 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
       }
     }
 
+    if (payload.operation_state && payload.operation_state !== 'normal') {
+      const rows = [
+        ['State', OPERATION_LABELS[payload.operation_state] || payload.operation_state],
+      ];
+
+      if (payload.operation_note) {
+        rows.push(['Reason', payload.operation_note]);
+      }
+
+      sections.push({
+        title: 'Operation State',
+        rows,
+      });
+    }
+
     if (payload.remarks) {
       sections.push({
         title: 'Remarks',
@@ -749,7 +902,20 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
       site_type: site?.type,
       reading_datetime: actualNow.toISOString(),
       slot_datetime: slotDate.toISOString(),
+      operation_state: isOperationEvent ? operationState : 'normal',
+      operation_note: isOperationEvent && operationState === 'shutdown' ? operationNote.trim() : null,
+      operation_event_at: isOperationEvent ? actualNow.toISOString() : null,
     };
+
+    if (isOperationEvent && !operationFeatureEnabled) {
+      showValidationError('Shutdown and resume can only be declared from a Deepwell form.', []);
+      return null;
+    }
+
+    if (isOperationEvent && operationState === 'shutdown' && !operationNote.trim()) {
+      showValidationError('Shutdown requires a reason.', ['operationNote']);
+      return null;
+    }
 
     if (remarks.trim() || isEditingReading) {
       payload.remarks = remarks.trim() || null;
@@ -768,8 +934,23 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
       const peroxideConsumption = parseNullableNumber(chlorination.peroxideConsumption);
       const powerConsumptionKwh = parseNullableNumber(chlorination.powerConsumptionKwh);
 
-      const missing = CHLORINATION_REQUIRED_FIELDS
-        .filter(([, , stateKey]) => parseNullableNumber(chlorination[stateKey]) === null);
+      const requiredFields = isOperationLockActive
+        ? [
+            ['chlorination.totalizer', 'Totalizer', totalizerVal],
+            ...(shiftBatchEnabled
+              ? [
+                  ['chlorination.chlorineConsumed', 'Chlorine consumed (kg)', chlorineConsumed],
+                  ['chlorination.peroxideConsumption', 'Peroxide consumption', peroxideConsumption],
+                  ['chlorination.powerConsumptionKwh', 'Power consumption (kWh)', powerConsumptionKwh],
+                ]
+              : []),
+          ]
+        : CHLORINATION_REQUIRED_FIELDS.map(([key, label, stateKey]) => [
+            key,
+            label,
+            parseNullableNumber(chlorination[stateKey]),
+          ]);
+      const missing = requiredFields.filter(([, , value]) => value === null);
 
       if (missing.length) {
         showValidationError(
@@ -779,18 +960,24 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
         return null;
       }
 
-      const numericValues = [
-        pressure,
-        rc,
-        turbidity,
-        ph,
-        tds,
-        tankLevel,
-        flowrate,
-        chlorineConsumed,
-        peroxideConsumption,
-        powerConsumptionKwh,
-      ];
+      const numericValues = isOperationLockActive
+        ? [
+            totalizerVal,
+            ...(isSubmitShiftBatchSlot ? [chlorineConsumed, peroxideConsumption, powerConsumptionKwh] : []),
+          ]
+        : [
+            totalizerVal,
+            pressure,
+            rc,
+            turbidity,
+            ph,
+            tds,
+            tankLevel,
+            flowrate,
+            chlorineConsumed,
+            peroxideConsumption,
+            powerConsumptionKwh,
+          ];
       if (numericValues.some((value) => value !== null && value < 0)) {
         setResultTone('error');
         setResultMessage('Chlorination values must not be negative.');
@@ -798,7 +985,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
         return null;
       }
 
-      if (ph !== null && (ph < 0 || ph > 14)) {
+      if (!isOperationLockActive && ph !== null && (ph < 0 || ph > 14)) {
         setResultTone('error');
         setResultMessage('pH must be between 0 and 14.');
         scrollToResultMessage();
@@ -806,13 +993,15 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
       }
 
       payload.totalizer = totalizerVal;
-      if (pressure !== null) payload.pressure_psi = pressure;
-      if (rc !== null) payload.rc_ppm = rc;
-      if (turbidity !== null) payload.turbidity_ntu = turbidity;
-      if (ph !== null) payload.ph = ph;
-      if (tds !== null) payload.tds_ppm = tds;
-      if (tankLevel !== null) payload.tank_level_liters = tankLevel;
-      if (flowrate !== null) payload.flowrate_m3hr = flowrate;
+      if (!isOperationLockActive) {
+        if (pressure !== null) payload.pressure_psi = pressure;
+        if (rc !== null) payload.rc_ppm = rc;
+        if (turbidity !== null) payload.turbidity_ntu = turbidity;
+        if (ph !== null) payload.ph = ph;
+        if (tds !== null) payload.tds_ppm = tds;
+        if (tankLevel !== null) payload.tank_level_liters = tankLevel;
+        if (flowrate !== null) payload.flowrate_m3hr = flowrate;
+      }
       if (isSubmitShiftBatchSlot) {
         if (chlorineConsumed !== null || isEditingReading) payload.chlorine_consumed = chlorineConsumed;
         if (peroxideConsumption !== null || isEditingReading) payload.peroxide_consumption = peroxideConsumption;
@@ -821,7 +1010,11 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
     }
 
     if (isDeepwell) {
-      const requiredFields = [
+      const requiredFields = isOperationLockActive
+        ? (isSubmitShiftBatchSlot
+            ? [['deepwell.powerKwhShift', 'Power Reading per Shift (kWh)', parseNullableNumber(deepwell.powerKwhShift)]]
+            : [])
+        : [
         ['deepwell.upstreamPressure', 'Upstream Pressure (psi)', parseNullableNumber(deepwell.upstreamPressure)],
         ['deepwell.downstreamPressure', 'Downstream Pressure (psi)', parseNullableNumber(deepwell.downstreamPressure)],
         ['deepwell.flowrate', 'Flowrate (m3/hr)', parseNullableNumber(deepwell.flowrate)],
@@ -834,8 +1027,15 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
       ];
       const powerKwhShift = parseNullableNumber(deepwell.powerKwhShift);
 
-      if (isSubmitShiftBatchSlot) {
+      if (!isOperationLockActive && isSubmitShiftBatchSlot) {
         requiredFields.push(['deepwell.powerKwhShift', 'Power Reading per Shift (kWh)', powerKwhShift]);
+      }
+
+      if (isOperationLockActive && !isSubmitShiftBatchSlot) {
+        setResultTone('error');
+        setResultMessage('Deepwell is currently shutdown. Shift power opens only during the boundary window.');
+        scrollToResultMessage();
+        return null;
       }
 
       const missing = requiredFields
@@ -849,6 +1049,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
         return null;
       }
 
+      const valuesByKey = Object.fromEntries(requiredFields.map(([key, , value]) => [key, value]));
       const values = requiredFields.map(([, , value]) => value);
       if (values.some((value) => value < 0)) {
         setResultTone('error');
@@ -857,16 +1058,18 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
         return null;
       }
 
-      payload.upstream_pressure_psi = values[0];
-      payload.downstream_pressure_psi = values[1];
-      payload.flowrate_m3hr = values[2];
-      payload.vfd_frequency_hz = values[3];
-      payload.voltage_l1_v = values[4];
-      payload.voltage_l2_v = values[5];
-      payload.voltage_l3_v = values[6];
-      payload.amperage_a = values[7];
-      payload.tds_ppm = values[8];
-      if (isSubmitShiftBatchSlot) {
+      if (!isOperationLockActive) {
+        payload.upstream_pressure_psi = valuesByKey['deepwell.upstreamPressure'];
+        payload.downstream_pressure_psi = valuesByKey['deepwell.downstreamPressure'];
+        payload.flowrate_m3hr = valuesByKey['deepwell.flowrate'];
+        payload.vfd_frequency_hz = valuesByKey['deepwell.vfdHz'];
+        payload.voltage_l1_v = valuesByKey['deepwell.voltL1'];
+        payload.voltage_l2_v = valuesByKey['deepwell.voltL2'];
+        payload.voltage_l3_v = valuesByKey['deepwell.voltL3'];
+        payload.amperage_a = valuesByKey['deepwell.amperage'];
+        payload.tds_ppm = valuesByKey['deepwell.tds'];
+      }
+      if (isSubmitShiftBatchSlot && (powerKwhShift !== null || isEditingReading || !isOperationLockActive)) {
         payload.power_kwh_shift = powerKwhShift;
       }
     }
@@ -887,6 +1090,11 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
     const submission = buildSubmissionPayload();
 
     if (!submission) {
+      return;
+    }
+
+    if (previewOnly) {
+      setPendingSubmission(submission);
       return;
     }
 
@@ -931,6 +1139,14 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
     const { payload, slotDate, slotText } = pendingSubmission;
     let finalPayload = payload;
     setPendingSubmission(null);
+
+    if (previewOnly) {
+      setResultTone('info');
+      setResultMessage(`Preview only. No reading was saved for slot ${slotText}.`);
+      scrollToResultMessage();
+      return;
+    }
+
     setSubmitting(true);
 
     try {
@@ -979,11 +1195,22 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
         };
       }
 
-      if (isEditingReading) {
-        await updateReading(editingReading.id, finalPayload);
-      } else {
-        await createReading(finalPayload);
+      const savedReading = isEditingReading
+        ? await updateReading(editingReading.id, finalPayload)
+        : await createReading(finalPayload);
+
+      if (isOperationEvent) {
+        await createSiteOperationEvent({
+          siteId: site?.id,
+          siteType: 'DEEPWELL',
+          state: operationState,
+          note: operationState === 'shutdown' ? operationNote.trim() : 'Operation resumed',
+          readingId: savedReading?.id || editingReading?.id,
+          createdBy: profile?.id,
+        });
+        await refreshLatestOperationEvent();
       }
+
       setShowSuccessAnim(true);
       setResultTone('success');
       const anomalies = getReadingAnomalies(finalPayload);
@@ -1048,6 +1275,25 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
     }
   }
 
+  const submitButtonLabel = submitting
+    ? 'Submitting...'
+    : slotStatusLoading
+      ? 'Checking slot...'
+      : locationChecking
+        ? 'Checking GPS...'
+        : duplicateReading
+          ? 'Slot already saved'
+          : isEditingReading
+            ? 'Review and update'
+            : previewOnly
+              ? 'Review preview'
+              : isOperationEvent
+                ? `Review ${operationState}`
+                : 'Review and submit';
+
+  const submitButtonDisabled =
+    !previewOnly && (slotStatusLoading || locationChecking || Boolean(duplicateReading) || (isEditingReading && !editWindowOpen));
+
   return (
     <KeyboardAvoidingView
       style={styles.keyboardWrap}
@@ -1096,8 +1342,10 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 <Ionicons name="clipboard-outline" size={20} color={palette.ink900} />
               </View>
               <View style={styles.confirmCopy}>
-                <Text style={styles.confirmTitle}>{isEditingReading ? 'Confirm edit' : 'Confirm reading'}</Text>
-                <Text style={styles.confirmBody}>Review the summary before {isEditingReading ? 'updating' : 'saving'} this slot.</Text>
+                <Text style={styles.confirmTitle}>{previewOnly ? 'Preview reading' : isEditingReading ? 'Confirm edit' : 'Confirm reading'}</Text>
+                <Text style={styles.confirmBody}>
+                  {previewOnly ? 'Review the form output. Preview mode will not save this slot.' : `Review the summary before ${isEditingReading ? 'updating' : 'saving'} this slot.`}
+                </Text>
               </View>
             </View>
 
@@ -1131,7 +1379,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 icon={<Ionicons name="create-outline" size={16} color={palette.ink900} />}
               />
               <PrimaryButton
-                label={isEditingReading ? 'Confirm update' : 'Confirm save'}
+                label={previewOnly ? 'Close preview' : isEditingReading ? 'Confirm update' : 'Confirm save'}
                 onPress={handleConfirmSubmit}
                 icon={<Ionicons name="checkmark-outline" size={16} color={palette.onAccent} />}
               />
@@ -1159,6 +1407,19 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
             screenScrollRef.current = ref;
           },
         }}
+        floatingOverlay={
+          <View style={styles.stickyActions}>
+            <View style={styles.stickyActionsInner}>
+              <PrimaryButton
+                label={submitButtonLabel}
+                onPress={handleSubmit}
+                loading={submitting || locationChecking}
+                disabled={submitButtonDisabled}
+                icon={<Ionicons name="save-outline" size={16} color={palette.onAccent} />}
+              />
+            </View>
+          </View>
+        }
       >
         <Card style={styles.contextCard}>
           <View style={styles.contextHeader}>
@@ -1255,6 +1516,113 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
             </Pressable>
           </View>
         </Card>
+
+        {operationFeatureEnabled ? (
+          <Card style={[styles.operationCard, isOperationEvent ? styles.operationCardActive : null]}>
+            <View style={styles.operationHeader}>
+              <View style={styles.operationIcon}>
+                <Ionicons name={siteIsShutdown ? 'power-outline' : 'pulse-outline'} size={18} color={palette.ink900} />
+              </View>
+              <View style={styles.operationCopy}>
+                <Text style={styles.operationTitle}>Operation state</Text>
+                <Text style={styles.operationBody}>
+                  {isOperationEvent ? operationLockedMessage : latestOperationText}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.operationStatusRow}>
+              <View style={[styles.operationStatusPill, siteIsShutdown ? styles.operationStatusPillShutdown : styles.operationStatusPillRunning]}>
+                <Ionicons name={siteIsShutdown ? 'power' : 'checkmark-circle'} size={13} color={palette.ink900} />
+                <Text style={styles.operationStatusText}>{siteIsShutdown ? 'Currently shutdown' : 'Currently running'}</Text>
+              </View>
+              <Pressable
+                onPress={handleOperationToggle}
+                disabled={operationLoading}
+                style={({ pressed }) => [
+                  styles.operationToggleButton,
+                  !siteIsShutdown && !isOperationEvent ? styles.operationToggleButtonDanger : null,
+                  isOperationEvent ? styles.operationToggleButtonSelected : null,
+                  pressed && !operationLoading ? styles.operationModeChipPressed : null,
+                  operationLoading ? styles.operationToggleButtonDisabled : null,
+                ]}
+              >
+                <Ionicons
+                  name={isOperationEvent ? 'close-circle-outline' : siteIsShutdown ? 'refresh-circle-outline' : 'power-outline'}
+                  size={15}
+                  color={isOperationEvent || (!siteIsShutdown && !isOperationEvent) ? palette.onAccent : palette.ink900}
+                />
+                <Text
+                  style={[
+                    styles.operationToggleText,
+                    isOperationEvent || (!siteIsShutdown && !isOperationEvent) ? styles.operationToggleTextSelected : null,
+                  ]}
+                >
+                  {operationLoading ? 'Checking...' : isOperationEvent ? 'Cancel event' : nextOperationLabel}
+                </Text>
+              </Pressable>
+            </View>
+            {isOperationEvent && operationState === 'shutdown' ? (
+              <View style={styles.shutdownReasonWrap}>
+                <Text style={[styles.shutdownReasonLabel, fieldHasError('operationNote') ? styles.shutdownReasonLabelError : null]}>
+                  Shutdown reason *
+                </Text>
+                <Pressable
+                  onPress={() => setShutdownReasonOpen((current) => !current)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Select shutdown reason"
+                  style={({ pressed }) => [
+                    styles.shutdownReasonButton,
+                    shutdownReasonOpen ? styles.shutdownReasonButtonOpen : null,
+                    fieldHasError('operationNote') ? styles.shutdownReasonButtonError : null,
+                    pressed ? styles.operationModeChipPressed : null,
+                  ]}
+                >
+                  <Text style={[styles.shutdownReasonValue, !operationNote ? styles.shutdownReasonPlaceholder : null]}>
+                    {operationNote || 'Select reason'}
+                  </Text>
+                  <Ionicons name={shutdownReasonOpen ? 'chevron-up' : 'chevron-down'} size={18} color={palette.ink900} />
+                </Pressable>
+                {shutdownReasonOpen ? (
+                  <View style={styles.shutdownReasonMenu}>
+                    {SHUTDOWN_REASONS.map((reason, index) => {
+                      const active = operationNote === reason;
+                      return (
+                        <Pressable
+                          key={reason}
+                          onPress={() => handleShutdownReasonSelect(reason)}
+                          style={({ pressed }) => [
+                            styles.shutdownReasonItem,
+                            index === SHUTDOWN_REASONS.length - 1 ? styles.shutdownReasonItemLast : null,
+                            active ? styles.shutdownReasonItemActive : null,
+                            pressed ? styles.shutdownReasonItemPressed : null,
+                          ]}
+                        >
+                          <Text style={[styles.shutdownReasonItemText, active ? styles.shutdownReasonItemTextActive : null]}>
+                            {reason}
+                          </Text>
+                          {active ? <Ionicons name="checkmark-circle" size={16} color={palette.teal600} /> : null}
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                ) : null}
+                {fieldHasError('operationNote') ? <Text style={styles.shutdownReasonError}>Required</Text> : null}
+              </View>
+            ) : null}
+          </Card>
+        ) : null}
+
+        {isChlorination && siteIsShutdown ? (
+          <MessageBanner tone="warning">
+            Deepwell has declared shutdown. Chlorination is locked to totalizer only; shift usage opens near turnover.
+          </MessageBanner>
+        ) : null}
+
+        {previewOnly ? (
+          <MessageBanner tone="info">
+            Preview mode is active for this test operator. You can inspect controls and review the payload, but nothing will be saved.
+          </MessageBanner>
+        ) : null}
       
         <MessageBanner tone={resultTone}>{resultMessage}</MessageBanner>
 
@@ -1290,7 +1658,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
           <MessageBanner tone="error">
             Edit is available only within 5 minutes after the reading is saved.
           </MessageBanner>
-        ) : duplicateReading ? (
+        ) : !previewOnly && duplicateReading ? (
           <MessageBanner tone="error">
             This slot is already saved by {readingOperatorName(duplicateReading)}. Submit is locked for this slot.
           </MessageBanner>
@@ -1367,6 +1735,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 value={chlorination.pressure}
                 onChangeText={(value) => patchChlorination('pressure', value)}
                 keyboardType="decimal-pad"
+                editable={canEditMeasurementField('chlorination.pressure')}
                 error={fieldHasError('chlorination.pressure')}
                 errorText={fieldHasError('chlorination.pressure') ? 'Required' : ''}
                 returnKeyType="next"
@@ -1378,6 +1747,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 value={chlorination.rc}
                 onChangeText={(value) => patchChlorination('rc', value)}
                 keyboardType="decimal-pad"
+                editable={canEditMeasurementField('chlorination.rc')}
                 error={fieldHasError('chlorination.rc')}
                 errorText={fieldHasError('chlorination.rc') ? 'Required' : ''}
                 returnKeyType="next"
@@ -1389,6 +1759,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 value={chlorination.turbidity}
                 onChangeText={(value) => patchChlorination('turbidity', value)}
                 keyboardType="decimal-pad"
+                editable={canEditMeasurementField('chlorination.turbidity')}
                 error={fieldHasError('chlorination.turbidity')}
                 errorText={fieldHasError('chlorination.turbidity') ? 'Required' : ''}
                 returnKeyType="next"
@@ -1400,6 +1771,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 value={chlorination.ph}
                 onChangeText={(value) => patchChlorination('ph', value)}
                 keyboardType="decimal-pad"
+                editable={canEditMeasurementField('chlorination.ph')}
                 error={fieldHasError('chlorination.ph')}
                 errorText={fieldHasError('chlorination.ph') ? 'Required' : ''}
                 returnKeyType="next"
@@ -1411,6 +1783,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 value={chlorination.tds}
                 onChangeText={(value) => patchChlorination('tds', value)}
                 keyboardType="decimal-pad"
+                editable={canEditMeasurementField('chlorination.tds')}
                 error={fieldHasError('chlorination.tds')}
                 errorText={fieldHasError('chlorination.tds') ? 'Required' : ''}
                 returnKeyType="next"
@@ -1422,6 +1795,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 value={chlorination.tankLevel}
                 onChangeText={(value) => patchChlorination('tankLevel', value)}
                 keyboardType="decimal-pad"
+                editable={canEditMeasurementField('chlorination.tankLevel')}
                 error={fieldHasError('chlorination.tankLevel')}
                 errorText={fieldHasError('chlorination.tankLevel') ? 'Required' : ''}
                 returnKeyType="next"
@@ -1433,6 +1807,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 value={chlorination.flowrate}
                 onChangeText={(value) => patchChlorination('flowrate', value)}
                 keyboardType="decimal-pad"
+                editable={canEditMeasurementField('chlorination.flowrate')}
                 error={fieldHasError('chlorination.flowrate')}
                 errorText={fieldHasError('chlorination.flowrate') ? 'Required' : ''}
                 returnKeyType="next"
@@ -1446,6 +1821,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 value={chlorination.totalizer}
                 onChangeText={(value) => patchChlorination('totalizer', value)}
                 keyboardType="decimal-pad"
+                editable={canEditMeasurementField('chlorination.totalizer')}
                 error={fieldHasError('chlorination.totalizer')}
                 errorText={fieldHasError('chlorination.totalizer') ? 'Required' : ''}
                 returnKeyType="next"
@@ -1472,7 +1848,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 value={chlorination.chlorineConsumed}
                 onChangeText={(value) => patchChlorination('chlorineConsumed', value)}
                 keyboardType="decimal-pad"
-                editable={shiftBatchEnabled}
+                editable={canEditMeasurementField('chlorination.chlorineConsumed', shiftBatchEnabled)}
                 placeholder={shiftBatchEnabled ? undefined : nextShiftBatchReadingText}
                 returnKeyType="next"
                 onSubmitEditing={() => focusField('chlorination.peroxideConsumption')}
@@ -1483,7 +1859,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 value={chlorination.peroxideConsumption}
                 onChangeText={(value) => patchChlorination('peroxideConsumption', value)}
                 keyboardType="decimal-pad"
-                editable={shiftBatchEnabled}
+                editable={canEditMeasurementField('chlorination.peroxideConsumption', shiftBatchEnabled)}
                 placeholder={shiftBatchEnabled ? undefined : nextShiftBatchReadingText}
                 returnKeyType="next"
                 onSubmitEditing={() => focusField('chlorination.powerConsumptionKwh')}
@@ -1494,7 +1870,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 value={chlorination.powerConsumptionKwh}
                 onChangeText={(value) => patchChlorination('powerConsumptionKwh', value)}
                 keyboardType="decimal-pad"
-                editable={shiftBatchEnabled}
+                editable={canEditMeasurementField('chlorination.powerConsumptionKwh', shiftBatchEnabled)}
                 placeholder={shiftBatchEnabled ? undefined : nextShiftBatchReadingText}
                 returnKeyType="next"
                 onSubmitEditing={() => focusField('remarks')}
@@ -1519,6 +1895,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 value={deepwell.upstreamPressure}
                 onChangeText={(value) => patchDeepwell('upstreamPressure', value)}
                 keyboardType="decimal-pad"
+                editable={canEditMeasurementField('deepwell.upstreamPressure')}
                 error={fieldHasError('deepwell.upstreamPressure')}
                 errorText={fieldHasError('deepwell.upstreamPressure') ? 'Required' : ''}
                 returnKeyType="next"
@@ -1530,6 +1907,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 value={deepwell.downstreamPressure}
                 onChangeText={(value) => patchDeepwell('downstreamPressure', value)}
                 keyboardType="decimal-pad"
+                editable={canEditMeasurementField('deepwell.downstreamPressure')}
                 error={fieldHasError('deepwell.downstreamPressure')}
                 errorText={fieldHasError('deepwell.downstreamPressure') ? 'Required' : ''}
                 returnKeyType="next"
@@ -1544,6 +1922,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 value={deepwell.flowrate}
                 onChangeText={(value) => patchDeepwell('flowrate', value)}
                 keyboardType="decimal-pad"
+                editable={canEditMeasurementField('deepwell.flowrate')}
                 error={fieldHasError('deepwell.flowrate')}
                 errorText={fieldHasError('deepwell.flowrate') ? 'Required' : ''}
                 returnKeyType="next"
@@ -1555,6 +1934,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 value={deepwell.vfdHz}
                 onChangeText={(value) => patchDeepwell('vfdHz', value)}
                 keyboardType="decimal-pad"
+                editable={canEditMeasurementField('deepwell.vfdHz')}
                 error={fieldHasError('deepwell.vfdHz')}
                 errorText={fieldHasError('deepwell.vfdHz') ? 'Required' : ''}
                 returnKeyType="next"
@@ -1566,6 +1946,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 value={deepwell.voltL1}
                 onChangeText={(value) => patchDeepwell('voltL1', value)}
                 keyboardType="decimal-pad"
+                editable={canEditMeasurementField('deepwell.voltL1')}
                 error={fieldHasError('deepwell.voltL1')}
                 errorText={fieldHasError('deepwell.voltL1') ? 'Required' : ''}
                 returnKeyType="next"
@@ -1577,6 +1958,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 value={deepwell.voltL2}
                 onChangeText={(value) => patchDeepwell('voltL2', value)}
                 keyboardType="decimal-pad"
+                editable={canEditMeasurementField('deepwell.voltL2')}
                 error={fieldHasError('deepwell.voltL2')}
                 errorText={fieldHasError('deepwell.voltL2') ? 'Required' : ''}
                 returnKeyType="next"
@@ -1588,6 +1970,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 value={deepwell.voltL3}
                 onChangeText={(value) => patchDeepwell('voltL3', value)}
                 keyboardType="decimal-pad"
+                editable={canEditMeasurementField('deepwell.voltL3')}
                 error={fieldHasError('deepwell.voltL3')}
                 errorText={fieldHasError('deepwell.voltL3') ? 'Required' : ''}
                 returnKeyType="next"
@@ -1599,6 +1982,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 value={deepwell.amperage}
                 onChangeText={(value) => patchDeepwell('amperage', value)}
                 keyboardType="decimal-pad"
+                editable={canEditMeasurementField('deepwell.amperage')}
                 error={fieldHasError('deepwell.amperage')}
                 errorText={fieldHasError('deepwell.amperage') ? 'Required' : ''}
                 returnKeyType="next"
@@ -1610,6 +1994,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 value={deepwell.tds}
                 onChangeText={(value) => patchDeepwell('tds', value)}
                 keyboardType="decimal-pad"
+                editable={canEditMeasurementField('deepwell.tds')}
                 error={fieldHasError('deepwell.tds')}
                 errorText={fieldHasError('deepwell.tds') ? 'Required' : ''}
                 returnKeyType="next"
@@ -1636,7 +2021,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
                 value={deepwell.powerKwhShift}
                 onChangeText={(value) => patchDeepwell('powerKwhShift', value)}
                 keyboardType="decimal-pad"
-                editable={shiftBatchEnabled}
+                editable={canEditMeasurementField('deepwell.powerKwhShift', shiftBatchEnabled)}
                 placeholder={shiftBatchEnabled ? undefined : nextShiftBatchReadingText}
                 error={fieldHasError('deepwell.powerKwhShift')}
                 errorText={fieldHasError('deepwell.powerKwhShift') ? 'Required' : ''}
@@ -1662,27 +2047,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
           </View>
         </Card>
 
-        <View style={styles.actions}>
-          <PrimaryButton
-            label={
-              submitting
-                ? 'Submitting...'
-                : slotStatusLoading
-                  ? 'Checking slot...'
-                  : locationChecking
-                    ? 'Checking GPS...'
-                    : duplicateReading
-                      ? 'Slot already saved'
-                      : isEditingReading
-                        ? 'Review and update'
-                        : 'Review and submit'
-            }
-            onPress={handleSubmit}
-            loading={submitting || locationChecking}
-            disabled={slotStatusLoading || locationChecking || Boolean(duplicateReading) || (isEditingReading && !editWindowOpen)}
-            icon={<Ionicons name="save-outline" size={16} color={palette.onAccent} />}
-          />
-        </View>
+        <View style={styles.actionsSpacer} />
       </ScreenShell>
     </KeyboardAvoidingView>
   );
@@ -1906,6 +2271,229 @@ function createStyles(palette, isDark, responsiveMetrics) {
       color: palette.teal600,
       fontSize: 10,
       fontWeight: '900',
+    },
+    operationCard: {
+      gap: 12,
+      backgroundColor: isDark ? '#102738' : '#F4FAFF',
+      borderColor: isDark ? '#235979' : '#C5E1F1',
+    },
+    operationCardActive: {
+      backgroundColor: isDark ? '#30240F' : '#FFF8E8',
+      borderColor: isDark ? '#6F561D' : '#E9C76F',
+    },
+    operationHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    operationIcon: {
+      width: 36,
+      height: 36,
+      borderRadius: 999,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: isDark ? '#173A4D' : '#E5F5FC',
+      borderWidth: 1,
+      borderColor: isDark ? '#2A7694' : '#B6DDEB',
+    },
+    operationCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    operationTitle: {
+      color: palette.ink900,
+      fontSize: 15,
+      fontWeight: '800',
+    },
+    operationBody: {
+      color: palette.ink700,
+      fontSize: 12,
+      lineHeight: 18,
+    },
+    operationModeRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    operationStatusRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: 8,
+    },
+    operationStatusPill: {
+      minHeight: 34,
+      flexGrow: 1,
+      borderRadius: 999,
+      borderWidth: 1,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+    },
+    operationStatusPillRunning: {
+      backgroundColor: isDark ? '#112B24' : '#E7F8F1',
+      borderColor: isDark ? '#1A655E' : '#9ADFC8',
+    },
+    operationStatusPillShutdown: {
+      backgroundColor: isDark ? '#35121C' : '#FFF0F2',
+      borderColor: isDark ? '#A84257' : '#F0AAB4',
+    },
+    operationStatusText: {
+      color: palette.ink900,
+      fontSize: 12,
+      fontWeight: '900',
+    },
+    operationToggleButton: {
+      minHeight: 38,
+      flexGrow: 1,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: isDark ? '#31506E' : '#C4D6E8',
+      backgroundColor: isDark ? '#101C28' : '#FFFFFF',
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+    },
+    operationToggleButtonSelected: {
+      borderColor: palette.teal600,
+      backgroundColor: palette.teal600,
+    },
+    operationToggleButtonDanger: {
+      borderColor: isDark ? '#8A4B56' : '#D8A0A8',
+      backgroundColor: isDark ? '#5A2631' : '#C75D6B',
+    },
+    operationToggleButtonDisabled: {
+      opacity: 0.62,
+    },
+    operationToggleText: {
+      color: palette.ink900,
+      fontSize: 12,
+      fontWeight: '900',
+    },
+    operationToggleTextSelected: {
+      color: palette.onAccent,
+    },
+    operationModeChip: {
+      minHeight: 36,
+      flexGrow: 1,
+      flexBasis: 96,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: palette.line,
+      backgroundColor: isDark ? '#101C28' : '#FFFFFF',
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+    },
+    operationModeChipActive: {
+      borderColor: palette.teal600,
+      backgroundColor: palette.teal600,
+    },
+    operationModeChipPressed: {
+      transform: [{ scale: 0.98 }],
+    },
+    operationModeText: {
+      color: palette.ink700,
+      fontSize: 12,
+      fontWeight: '900',
+    },
+    operationModeTextActive: {
+      color: palette.onAccent,
+    },
+    shutdownReasonWrap: {
+      gap: 7,
+    },
+    shutdownReasonLabel: {
+      color: palette.ink900,
+      fontSize: 11,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+    },
+    shutdownReasonLabelError: {
+      color: palette.errorText,
+    },
+    shutdownReasonButton: {
+      minHeight: 56,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: isDark ? '#2B465F' : '#BFD2E4',
+      backgroundColor: isDark ? '#0B1724' : '#F5FAFF',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    shutdownReasonButtonOpen: {
+      borderColor: palette.teal500,
+      backgroundColor: isDark ? '#0F2232' : '#FFFFFF',
+    },
+    shutdownReasonButtonError: {
+      borderColor: palette.errorText,
+      borderWidth: 1.5,
+      backgroundColor: palette.errorBg,
+    },
+    shutdownReasonValue: {
+      flex: 1,
+      color: palette.ink900,
+      fontSize: 15,
+      fontWeight: '800',
+    },
+    shutdownReasonPlaceholder: {
+      color: palette.ink500,
+    },
+    shutdownReasonMenu: {
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: isDark ? '#2B465F' : '#BFD2E4',
+      backgroundColor: isDark ? '#101C28' : '#FFFFFF',
+      overflow: 'hidden',
+    },
+    shutdownReasonItem: {
+      minHeight: 46,
+      paddingHorizontal: 14,
+      paddingVertical: 11,
+      borderBottomWidth: 1,
+      borderBottomColor: isDark ? '#24394C' : '#E1ECF5',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    shutdownReasonItemLast: {
+      borderBottomWidth: 0,
+    },
+    shutdownReasonItemActive: {
+      backgroundColor: isDark ? '#123A37' : '#E8F8F4',
+    },
+    shutdownReasonItemPressed: {
+      opacity: 0.76,
+    },
+    shutdownReasonItemText: {
+      flex: 1,
+      color: palette.ink900,
+      fontSize: 13,
+      fontWeight: '800',
+    },
+    shutdownReasonItemTextActive: {
+      color: palette.teal600,
+    },
+    shutdownReasonError: {
+      color: palette.errorText,
+      fontSize: 12,
+      fontWeight: '700',
+      lineHeight: 16,
     },
     geofenceCard: {
       gap: 12,
@@ -2153,9 +2741,27 @@ function createStyles(palette, isDark, responsiveMetrics) {
       fontSize: 12,
       fontWeight: '900',
     },
-    actions: {
-      gap: 12,
-      paddingBottom: 18,
+    stickyActions: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: 0,
+      zIndex: 1200,
+      elevation: 1200,
+      paddingTop: 10,
+      paddingBottom: 12,
+      backgroundColor: isDark ? 'rgba(16, 28, 40, 0.96)' : 'rgba(244, 250, 255, 0.96)',
+      borderTopWidth: 1,
+      borderTopColor: isDark ? '#274158' : '#C9DCEB',
+    },
+    stickyActionsInner: {
+      width: '100%',
+      maxWidth: responsiveMetrics.contentMaxWidth,
+      alignSelf: 'center',
+      paddingHorizontal: responsiveMetrics.contentPadding,
+    },
+    actionsSpacer: {
+      height: 92,
     },
   }, responsiveMetrics, {
     exclude: ['successAnimationOverlay.flex', 'confirmOverlay.flex', 'confirmButtonRow.flexDirection'],

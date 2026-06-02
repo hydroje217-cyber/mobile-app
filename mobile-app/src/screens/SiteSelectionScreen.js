@@ -117,6 +117,7 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
   const tutorialScrollRef = useRef(null);
   const tutorialTargetLayouts = useRef({});
   const isPrivileged = ['admin', 'supervisor', 'manager', 'general_manager'].includes(profile?.role);
+  const isPreviewOperator = profile?.role === 'test_operator';
   const [sites, setSites] = useState([]);
   const [selectedSite, setSelectedSite] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -585,13 +586,13 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
     const siteHasGeofence = GEOFENCING_ENABLED && Boolean(getSiteCoordinates(site));
     let location = operatorLocation;
 
-    if (siteHasGeofence && !location) {
+    if (!isPreviewOperator && siteHasGeofence && !location) {
       location = await refreshOperatorLocation();
     }
 
     const result = evaluateSiteGeofence(site, location);
 
-    if (siteHasGeofence && !result.allowed) {
+    if (!isPreviewOperator && siteHasGeofence && !result.allowed) {
       const accuracyNote = result.accuracyAcceptable
         ? ''
         : ` GPS accuracy is ${formatDistanceMeters(result.accuracyM)}; retry when it is within ${formatDistanceMeters(
@@ -608,7 +609,7 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
     }
 
     setSelectedSite(site);
-    navigation.navigate('submit-reading', { site });
+    navigation.navigate('submit-reading', { site, previewOnly: isPreviewOperator });
   }
 
   const showSiteSkeleton = loading && !sites.length;
@@ -800,6 +801,11 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
 
       {message ? <MessageBanner tone={sites.length ? 'info' : 'error'}>{message}</MessageBanner> : null}
       {offlineMessage ? <MessageBanner tone={offlineTone}>{offlineMessage}</MessageBanner> : null}
+      {isPreviewOperator ? (
+        <MessageBanner tone="info">
+          Test operator preview mode is active. You can open the submit form anytime, but no readings will be saved.
+        </MessageBanner>
+      ) : null}
 
       <View
         onLayout={registerTutorialTarget('gps')}
@@ -964,9 +970,9 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
         style={[styles.actions, styles.tutorialTarget, activeTutorialTarget === 'submit' && styles.tutorialTargetActive]}
       >
         <PrimaryButton
-          label={currentSlotReading ? 'Current slot already saved' : 'Submit current checkpoint'}
+          label={isPreviewOperator ? 'Preview submit form' : currentSlotReading ? 'Current slot already saved' : 'Submit current checkpoint'}
           onPress={() => handleNavigateToSubmit(selectedSite)}
-          disabled={!selectedSite || Boolean(currentSlotReading) || selectedSiteBlocked || locationChecking}
+          disabled={!selectedSite || (!isPreviewOperator && (Boolean(currentSlotReading) || selectedSiteBlocked || locationChecking))}
           icon={<Ionicons name="create-outline" size={16} color={palette.onAccent} />}
         />
         {isPrivileged ? (

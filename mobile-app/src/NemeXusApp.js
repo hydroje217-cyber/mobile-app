@@ -26,6 +26,7 @@ const initialRoute = {
 };
 const OFFICE_ROLES = ['admin', 'supervisor', 'manager', 'general_manager'];
 const ACCOUNT_MANAGER_ROLES = ['admin', 'general_manager'];
+const OPERATOR_ROLES = ['operator', 'test_operator'];
 
 function getBackRoute(route) {
   if (route.name === 'account-edit') {
@@ -196,7 +197,8 @@ export default function NemeXusApp() {
   const isPrivileged = OFFICE_ROLES.includes(profile?.role);
   const canManageAccounts = ACCOUNT_MANAGER_ROLES.includes(profile?.role);
   const isGeneralManager = profile?.role === 'general_manager';
-  const isOperator = profile?.role === 'operator';
+  const isOperator = OPERATOR_ROLES.includes(profile?.role);
+  const isPreviewOperator = profile?.role === 'test_operator';
   const isApprovedForApp = Boolean(profile?.is_active && (profile?.is_approved || isPrivileged));
   const needsOperatorTutorial = Boolean(isOperator && isApprovedForApp && !profile?.operator_tutorial_seen);
   const routeName = route.name === 'home'
@@ -247,6 +249,7 @@ export default function NemeXusApp() {
         site={route.params.site || operatorSite}
         editingReading={route.params.editingReading}
         editReturnParams={route.params.editReturnParams}
+        previewOnly={Boolean(route.params.previewOnly || isPreviewOperator)}
       />
     );
   } else if (routeName === 'reading-history') {
@@ -267,7 +270,6 @@ export default function NemeXusApp() {
   const showOperatorBottomNav =
     isOperator &&
     (routeName === 'site-selection' ||
-      routeName === 'submit-reading' ||
       (routeName === 'office-dashboard' && route.params?.section === 'readings') ||
       (routeName === 'reading-history' && route.params?.source !== 'office-dashboard'));
   const bottomNavActiveKey =

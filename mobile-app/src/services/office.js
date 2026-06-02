@@ -13,6 +13,24 @@ const DAILY_SUMMARY_SELECT =
 const PROFILE_SELECT = 'id, email, full_name, role, is_active, is_approved, approved_at, created_at, last_seen_at';
 const LOGIN_LOG_SELECT = 'id, user_id, email, role, browser, device, user_agent, created_at, profile:profiles(full_name, email)';
 const BASIC_LOGIN_LOG_SELECT = 'id, user_id, email, role, browser, device, user_agent, created_at';
+const RECENT_CHLORINATION_SELECT =
+  'id, status, operation_state, operation_note, operation_event_at, created_at, reading_datetime, slot_datetime, totalizer, ph, rc_ppm, site:sites(name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)';
+const RECENT_CHLORINATION_LEGACY_SELECT =
+  'id, status, created_at, reading_datetime, slot_datetime, totalizer, ph, rc_ppm, site:sites(name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)';
+const RECENT_DEEPWELL_SELECT =
+  'id, status, operation_state, operation_note, operation_event_at, created_at, reading_datetime, slot_datetime, flowrate_m3hr, site:sites(name, type), submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)';
+const RECENT_DEEPWELL_LEGACY_SELECT =
+  'id, status, created_at, reading_datetime, slot_datetime, flowrate_m3hr, site:sites(name, type), submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)';
+const SLOT_CHLORINATION_SELECT =
+  'id, site_id, status, remarks, operation_state, operation_note, operation_event_at, created_at, reading_datetime, slot_datetime, totalizer, pressure_psi, rc_ppm, turbidity_ntu, ph, tds_ppm, tank_level_liters, flowrate_m3hr, chlorine_consumed, peroxide_consumption, chlorination_power_kwh, site:sites(id, name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)';
+const SLOT_CHLORINATION_LEGACY_SELECT =
+  'id, site_id, status, remarks, created_at, reading_datetime, slot_datetime, totalizer, pressure_psi, rc_ppm, turbidity_ntu, ph, tds_ppm, tank_level_liters, flowrate_m3hr, chlorine_consumed, peroxide_consumption, chlorination_power_kwh, site:sites(id, name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)';
+const SLOT_DEEPWELL_SELECT =
+  'id, site_id, status, remarks, operation_state, operation_note, operation_event_at, created_at, reading_datetime, slot_datetime, upstream_pressure_psi, downstream_pressure_psi, flowrate_m3hr, vfd_frequency_hz, voltage_l1_v, voltage_l2_v, voltage_l3_v, amperage_a, tds_ppm, power_kwh_shift, site:sites(id, name, type), submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)';
+const SLOT_DEEPWELL_LEGACY_SELECT =
+  'id, site_id, status, remarks, created_at, reading_datetime, slot_datetime, upstream_pressure_psi, downstream_pressure_psi, flowrate_m3hr, vfd_frequency_hz, voltage_l1_v, voltage_l2_v, voltage_l3_v, amperage_a, tds_ppm, power_kwh_shift, site:sites(id, name, type), submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)';
+const SITE_OPERATION_EVENT_SELECT =
+  'id, site_id, site_type, state, note, reading_id, created_by, created_at, site:sites(id, name, type), created_profile:profiles!site_operation_events_created_by_fkey(full_name, email)';
 
 function requireSupabase() {
   if (!supabase) {
@@ -85,6 +103,127 @@ async function fetchLoginLogs({ includeLoginLogs }) {
   return isMissingColumnError(legacyResult.error)
     ? { data: [], error: null }
     : legacyResult;
+}
+
+async function withOptionalColumnFallback(fullQuery, legacyQuery) {
+  const fullResult = await fullQuery();
+
+  if (!fullResult.error || !isMissingColumnError(fullResult.error)) {
+    return fullResult;
+  }
+
+  return legacyQuery();
+}
+
+function fetchRecentChlorinationReadings(limit) {
+  return withOptionalColumnFallback(
+    () =>
+      supabase
+        .from('chlorination_readings')
+        .select(RECENT_CHLORINATION_SELECT)
+        .order('created_at', { ascending: false })
+        .limit(limit),
+    () =>
+      supabase
+        .from('chlorination_readings')
+        .select(RECENT_CHLORINATION_LEGACY_SELECT)
+        .order('created_at', { ascending: false })
+        .limit(limit)
+  );
+}
+
+function isMissingOptionalOperationTableError(error) {
+  return (
+    isMissingColumnError(error) ||
+    error?.code === '42P01' ||
+    error?.code === 'PGRST200' ||
+    /relation .* does not exist/i.test(error?.message || '') ||
+    /could not find .* relationship/i.test(error?.message || '') ||
+    /schema cache.*site_operation_events/i.test(error?.message || '')
+  );
+}
+
+function fetchRecentDeepwellReadings(limit) {
+  return withOptionalColumnFallback(
+    () =>
+      supabase
+        .from('deepwell_readings')
+        .select(RECENT_DEEPWELL_SELECT)
+        .order('created_at', { ascending: false })
+        .limit(limit),
+    () =>
+      supabase
+        .from('deepwell_readings')
+        .select(RECENT_DEEPWELL_LEGACY_SELECT)
+        .order('created_at', { ascending: false })
+        .limit(limit)
+  );
+}
+
+function fetchTodayChlorinationSlots({ slotQueryStartIso, tomorrowIso }) {
+  return withOptionalColumnFallback(
+    () =>
+      supabase
+        .from('chlorination_readings')
+        .select(SLOT_CHLORINATION_SELECT)
+        .gte('slot_datetime', slotQueryStartIso)
+        .lt('slot_datetime', tomorrowIso)
+        .order('slot_datetime', { ascending: true }),
+    () =>
+      supabase
+        .from('chlorination_readings')
+        .select(SLOT_CHLORINATION_LEGACY_SELECT)
+        .gte('slot_datetime', slotQueryStartIso)
+        .lt('slot_datetime', tomorrowIso)
+        .order('slot_datetime', { ascending: true })
+  );
+}
+
+function fetchTodayDeepwellSlots({ slotQueryStartIso, tomorrowIso }) {
+  return withOptionalColumnFallback(
+    () =>
+      supabase
+        .from('deepwell_readings')
+        .select(SLOT_DEEPWELL_SELECT)
+        .gte('slot_datetime', slotQueryStartIso)
+        .lt('slot_datetime', tomorrowIso)
+        .order('slot_datetime', { ascending: true }),
+    () =>
+      supabase
+        .from('deepwell_readings')
+        .select(SLOT_DEEPWELL_LEGACY_SELECT)
+        .gte('slot_datetime', slotQueryStartIso)
+        .lt('slot_datetime', tomorrowIso)
+        .order('slot_datetime', { ascending: true })
+  );
+}
+
+async function fetchSiteOperationEvents({ untilIso }) {
+  const result = await supabase
+    .from('site_operation_events')
+    .select(SITE_OPERATION_EVENT_SELECT)
+    .eq('site_type', 'DEEPWELL')
+    .lte('created_at', untilIso)
+    .order('created_at', { ascending: false })
+    .limit(200);
+
+  if (!result.error || !isMissingOptionalOperationTableError(result.error)) {
+    return result;
+  }
+
+  const basicResult = await supabase
+    .from('site_operation_events')
+    .select('id, site_id, site_type, state, note, reading_id, created_by, created_at')
+    .eq('site_type', 'DEEPWELL')
+    .lte('created_at', untilIso)
+    .order('created_at', { ascending: false })
+    .limit(200);
+
+  if (!basicResult.error || !isMissingOptionalOperationTableError(basicResult.error)) {
+    return basicResult;
+  }
+
+  return { data: [], error: null };
 }
 
 function startOfTodayIso() {
@@ -363,6 +502,7 @@ export async function getOfficeDashboardSnapshot({ limit = 12, includeLoginLogs 
     todayDeepwellSlotsResult,
     profilesResult,
     loginLogsResult,
+    siteOperationEventsResult,
     monthlyChlorinationReadingsResult,
     monthlyDeepwellReadingsResult,
     dailySummariesResult,
@@ -397,42 +537,17 @@ export async function getOfficeDashboardSnapshot({ limit = 12, includeLoginLogs 
       .from('deepwell_readings')
       .select('id', { count: 'exact', head: true })
       .gte('created_at', todayIso),
-    supabase
-      .from('chlorination_readings')
-      .select(
-        'id, status, created_at, reading_datetime, slot_datetime, totalizer, ph, rc_ppm, site:sites(name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)'
-      )
-      .order('created_at', { ascending: false })
-      .limit(limit),
-    supabase
-      .from('deepwell_readings')
-      .select(
-        'id, status, created_at, reading_datetime, slot_datetime, flowrate_m3hr, site:sites(name, type), submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)'
-      )
-      .order('created_at', { ascending: false })
-      .limit(limit),
-    supabase
-      .from('chlorination_readings')
-      .select(
-        'id, site_id, status, remarks, created_at, reading_datetime, slot_datetime, totalizer, pressure_psi, rc_ppm, turbidity_ntu, ph, tds_ppm, tank_level_liters, flowrate_m3hr, chlorine_consumed, peroxide_consumption, chlorination_power_kwh, site:sites(id, name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)'
-      )
-      .gte('slot_datetime', slotQueryStartIso)
-      .lt('slot_datetime', tomorrowIso)
-      .order('slot_datetime', { ascending: true }),
-    supabase
-      .from('deepwell_readings')
-      .select(
-        'id, site_id, status, remarks, created_at, reading_datetime, slot_datetime, upstream_pressure_psi, downstream_pressure_psi, flowrate_m3hr, vfd_frequency_hz, voltage_l1_v, voltage_l2_v, voltage_l3_v, amperage_a, tds_ppm, power_kwh_shift, site:sites(id, name, type), submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)'
-      )
-      .gte('slot_datetime', slotQueryStartIso)
-      .lt('slot_datetime', tomorrowIso)
-      .order('slot_datetime', { ascending: true }),
+    fetchRecentChlorinationReadings(limit),
+    fetchRecentDeepwellReadings(limit),
+    fetchTodayChlorinationSlots({ slotQueryStartIso, tomorrowIso }),
+    fetchTodayDeepwellSlots({ slotQueryStartIso, tomorrowIso }),
     supabase
       .from('profiles')
       .select(PROFILE_SELECT)
       .order('created_at', { ascending: false })
       .limit(20),
     fetchLoginLogs({ includeLoginLogs }),
+    fetchSiteOperationEvents({ untilIso: tomorrowIso }),
     supabase
       .from('chlorination_readings')
       .select('id, site_id, status, created_at, reading_datetime, slot_datetime, totalizer, chlorine_consumed, peroxide_consumption, chlorination_power_kwh')
@@ -464,6 +579,7 @@ export async function getOfficeDashboardSnapshot({ limit = 12, includeLoginLogs 
   if (includeLoginLogs) {
     throwIfError(loginLogsResult, 'Failed to load login logs.');
   }
+  throwIfError(siteOperationEventsResult, 'Failed to load site operation events.');
   throwIfError(monthlyChlorinationReadingsResult, 'Failed to load monthly chlorination production.');
   throwIfError(monthlyDeepwellReadingsResult, 'Failed to load monthly deepwell power consumption.');
   throwIfError(dailySummariesResult, 'Failed to load historical daily summaries.');
@@ -492,6 +608,7 @@ export async function getOfficeDashboardSnapshot({ limit = 12, includeLoginLogs 
     recentReadings,
     sites: sitesResult.data ?? [],
     todaySlotReadings,
+    siteOperationEvents: siteOperationEventsResult.data ?? [],
     profiles: profilesResult.data ?? [],
     loginLogs: (loginLogsResult.data ?? []).map(normalizeLoginLog),
     monthlyProduction: buildMonthlyProduction(monthlyChlorinationReadingsResult.data ?? [], {

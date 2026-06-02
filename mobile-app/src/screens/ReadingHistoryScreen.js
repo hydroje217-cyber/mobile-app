@@ -42,6 +42,11 @@ const SHIFT_SORT_ORDER = {
   b: 1,
   a: 2,
 };
+const OPERATION_LABELS = {
+  normal: 'Normal',
+  shutdown: 'Shutdown',
+  resumed: 'Resumed',
+};
 const LOGSHEET_TIME_SLOTS = Array.from({ length: 48 }, (_, index) => {
   const minutes = index * 30;
   const hours = Math.floor(minutes / 60);
@@ -989,6 +994,15 @@ function DataTable({ columns, rows, emptyMessage, onEditReading, canBypassEditTi
                 <MessageBanner tone="info">No numeric values were saved for this reading.</MessageBanner>
               )}
 
+              {selectedRow?.operation_state && selectedRow.operation_state !== 'normal' ? (
+                <View style={styles.readingSummaryRemarks}>
+                  <Text style={styles.readingSummaryLabel}>
+                    {selectedRow.operation_state === 'shutdown' ? 'Shutdown note' : 'Resume note'}
+                  </Text>
+                  <Text style={styles.readingSummaryRemarksText}>{selectedRow.operation_note || '-'}</Text>
+                </View>
+              ) : null}
+
               {selectedRow?.remarks ? (
                 <View style={styles.readingSummaryRemarks}>
                   <Text style={styles.readingSummaryLabel}>Remarks</Text>
@@ -1155,6 +1169,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     { key: 'peroxide', label: 'Peroxide Consumption', width: 155, render: (row) => row.peroxide_consumption },
     { key: 'recordedAt', label: 'Recorded At', width: 135, render: (row) => formatShortDateTime(row.reading_datetime) },
     { key: 'recordedBy', label: 'Recorded By', width: 140, render: (row) => row.submitted_profile?.full_name || row.submitted_profile?.email || '-' },
+    { key: 'operation', label: 'Operation', width: 110, render: (row) => OPERATION_LABELS[row.operation_state || 'normal'] || '-' },
     { key: 'remarks', label: 'Remarks', width: 160, render: (row) => row.remarks || row.status || '-' },
   ];
 
@@ -1175,6 +1190,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     { key: 'powerYield', label: 'Power kWh Consumed', width: 155, render: (row) => formatAverageValue(row.power_yield_kwh) },
     { key: 'recordedAt', label: 'Recorded At', width: 135, render: (row) => formatShortDateTime(row.reading_datetime) },
     { key: 'recordedBy', label: 'Recorded By', width: 140, render: (row) => row.submitted_profile?.full_name || row.submitted_profile?.email || '-' },
+    { key: 'operation', label: 'Operation', width: 110, render: (row) => OPERATION_LABELS[row.operation_state || 'normal'] || '-' },
     { key: 'remarks', label: 'Remarks', width: 160, render: (row) => row.remarks || row.status || '-' },
   ];
 
@@ -1186,6 +1202,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     { key: 'type', label: 'Type', width: 110, render: (row) => row.site_type || '-' },
     { key: 'submittedBy', label: 'Submitted by', width: 150, render: (row) => row.submitted_profile?.full_name || row.submitted_profile?.email || '-' },
     { key: 'status', label: 'Status', width: 100, render: (row) => row.status || '-' },
+    { key: 'operation', label: 'Operation', width: 110, render: (row) => OPERATION_LABELS[row.operation_state || 'normal'] || '-' },
     { key: 'remarks', label: 'Remarks', width: 180, render: (row) => row.remarks || '-' },
   ];
 
