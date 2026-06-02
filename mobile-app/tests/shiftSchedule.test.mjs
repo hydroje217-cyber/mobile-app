@@ -15,6 +15,7 @@ try {
   const {
     formatShiftBatchSlots,
     isShiftBatchEntryWindow,
+    isShiftFirstOrLastReadingSlot,
     minutesSinceMidnight,
     nextShiftBatchEntryText,
     shiftNameForSlot,
@@ -39,6 +40,17 @@ try {
   assert.equal(isShiftBatchEntryWindow(new Date(2026, 0, 1, 13, 30)), false);
   assert.equal(isShiftBatchEntryWindow(new Date(2026, 0, 1, 15, 0)), false);
   assert.equal(isShiftBatchEntryWindow(new Date(2026, 0, 1, 23, 0)), false);
+
+  assert.equal(isShiftFirstOrLastReadingSlot(new Date(2026, 0, 1, 6, 30)), true);
+  assert.equal(isShiftFirstOrLastReadingSlot(new Date(2026, 0, 1, 7, 0)), true);
+  assert.equal(isShiftFirstOrLastReadingSlot(new Date(2026, 0, 1, 14, 30)), true);
+  assert.equal(isShiftFirstOrLastReadingSlot(new Date(2026, 0, 1, 15, 0)), true);
+  assert.equal(isShiftFirstOrLastReadingSlot(new Date(2026, 0, 1, 22, 30)), true);
+  assert.equal(isShiftFirstOrLastReadingSlot(new Date(2026, 0, 1, 23, 0)), true);
+  assert.equal(isShiftFirstOrLastReadingSlot(new Date(2026, 0, 1, 6, 0)), false);
+  assert.equal(isShiftFirstOrLastReadingSlot(new Date(2026, 0, 1, 7, 30)), false);
+  assert.equal(isShiftFirstOrLastReadingSlot(new Date(2026, 0, 1, 14, 0)), false);
+  assert.equal(isShiftFirstOrLastReadingSlot(new Date(2026, 0, 1, 22, 0)), false);
 
   assert.equal(
     nextShiftBatchEntryText(new Date(2026, 0, 1, 7, 0)),

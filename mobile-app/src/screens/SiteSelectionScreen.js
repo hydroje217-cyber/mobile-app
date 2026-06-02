@@ -11,6 +11,7 @@ import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 import { getOfflineReadingCount, syncOfflineReadings } from '../services/offlineReadings';
 import { getReadingForSlot, listReadings } from '../services/readings';
 import { listAccessibleSites } from '../services/sites';
+import { getLatestDeepwellOperationEvent } from '../services/siteOperations';
 import {
   evaluateSiteGeofence,
   findNearestSiteGeofence,
@@ -131,6 +132,7 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
   const [locationChecking, setLocationChecking] = useState(false);
   const [geofenceMessage, setGeofenceMessage] = useState('');
   const [geofenceTone, setGeofenceTone] = useState('info');
+  const [latestDeepwellOperationEvent, setLatestDeepwellOperationEvent] = useState(null);
   const [currentSlot, setCurrentSlot] = useState(() => roundDownTo30MinSlot(new Date()));
   const [currentSlotReading, setCurrentSlotReading] = useState(null);
   const [checkpointSummary, setCheckpointSummary] = useState({
@@ -196,6 +198,17 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
             ? `${compactGeofencePlace} · ${compactGeofenceDistance} from site`
             : 'GPS notice available for this site.'
           : '';
+  const deepwellShutdownActive = latestDeepwellOperationEvent?.state === 'shutdown';
+  const latestOperationBy =
+    latestDeepwellOperationEvent?.created_profile?.full_name ||
+    latestDeepwellOperationEvent?.created_profile?.email ||
+    'Deepwell operator';
+  const latestOperationAt = latestDeepwellOperationEvent?.created_at
+    ? formatTimestamp(new Date(latestDeepwellOperationEvent.created_at))
+    : '';
+  const shutdownIndicatorText = latestOperationAt
+    ? `Shutdown declared by ${latestOperationBy} at ${latestOperationAt}.`
+    : 'Deepwell shutdown is currently active.';
 
   function registerTutorialTarget(target) {
     return (event) => {
@@ -292,6 +305,34 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadDeepwellOperationState() {
+      try {
+        const event = await getLatestDeepwellOperationEvent();
+        if (mounted) {
+          setLatestDeepwellOperationEvent(event);
+        }
+      } catch {
+        if (mounted) {
+          setLatestDeepwellOperationEvent(null);
+        }
+      }
+    }
+
+    loadDeepwellOperationState();
+    const intervalId = setInterval(loadDeepwellOperationState, 60000);
+
+    const unsubscribeFocus = navigation?.addListener?.('focus', loadDeepwellOperationState);
+
+    return () => {
+      mounted = false;
+      clearInterval(intervalId);
+      unsubscribeFocus?.();
+    };
+  }, [navigation]);
 
   useEffect(() => {
     onSelectedSiteChange?.(selectedSite);
@@ -737,27 +778,43 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
       ) : null}
       
       {selectedSite ? (
-        <View style={styles.selectionCard}>
+        <View style={[styles.selectionCard, deepwellShutdownActive ? styles.selectionCardShutdown : null]}>
           <View style={styles.selectionHeader}>
-            <View style={styles.selectionIcon}>
+            <View style={[styles.selectionIcon, deepwellShutdownActive ? styles.selectionIconShutdown : null]}>
               <Ionicons
-                name={selectedSite.type === 'CHLORINATION' ? 'water-outline' : 'flash-outline'}
+                name={deepwellShutdownActive ? 'power-outline' : selectedSite.type === 'CHLORINATION' ? 'water-outline' : 'flash-outline'}
                 size={17}
-                color={palette.teal600}
+                color={deepwellShutdownActive ? palette.errorText : palette.teal600}
               />
             </View>
             <View style={styles.selectionCopy}>
               <Text style={styles.selectionTitle}>Ready for {selectedSite.name}</Text>
               <Text style={styles.selectionBody}>
-                {selectedSite.type === 'CHLORINATION' ? 'Chlorination line' : 'Deepwell station'}
+                {deepwellShutdownActive
+                  ? shutdownIndicatorText
+                  : selectedSite.type === 'CHLORINATION'
+                    ? 'Chlorination line'
+                    : 'Deepwell station'}
               </Text>
             </View>
-            <View style={styles.selectionStatusPill}>
-              <Ionicons name="checkmark-circle" size={12} color={palette.teal600} />
-              <Text style={styles.selectionStatusText}>Selected</Text>
+            <View style={[styles.selectionStatusPill, deepwellShutdownActive ? styles.selectionStatusPillShutdown : null]}>
+              <Ionicons
+                name={deepwellShutdownActive ? 'power' : 'checkmark-circle'}
+                size={12}
+                color={deepwellShutdownActive ? palette.errorText : palette.teal600}
+              />
+              <Text style={[styles.selectionStatusText, deepwellShutdownActive ? styles.selectionStatusTextShutdown : null]}>
+                {deepwellShutdownActive ? 'Shutdown' : 'Selected'}
+              </Text>
             </View>
           </View>
         </View>
+      ) : null}
+
+      {selectedSite && deepwellShutdownActive ? (
+        <MessageBanner tone="warning">
+          Shutdown hours are active. Deepwell and chlorination submit forms will lock normal readings and open only the allowed shutdown fields.
+        </MessageBanner>
       ) : null}
       
       {false && selectedSite ? (
@@ -897,6 +954,7 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
             const siteGeofence = geofenceBySiteId[String(site.id)];
             const siteHasGeofence = GEOFENCING_ENABLED && Boolean(getSiteCoordinates(site));
             const blocked = Boolean(siteHasGeofence && siteGeofence && !siteGeofence.allowed);
+            const siteShutdownAffected = deepwellShutdownActive && ['DEEPWELL', 'CHLORINATION'].includes(site.type);
             return (
               <Pressable
                 key={site.id}
@@ -905,27 +963,36 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
                   styles.option,
                   blocked && styles.optionBlocked,
                   active && styles.optionActive,
+                  siteShutdownAffected && styles.optionShutdown,
                   pressed && styles.optionPressed,
                 ]}
               >
-                <View style={[styles.optionAccent, active && styles.optionAccentActive]} />
+                <View style={[styles.optionAccent, active && styles.optionAccentActive, siteShutdownAffected && styles.optionAccentShutdown]} />
                 <View style={styles.optionTopRow}>
-                  <View style={[styles.typeIcon, active && styles.typeIconActive]}>
+                  <View style={[styles.typeIcon, active && styles.typeIconActive, siteShutdownAffected && styles.typeIconShutdown]}>
                     <Ionicons
-                      name={site.type === 'CHLORINATION' ? 'water-outline' : 'flash-outline'}
+                      name={siteShutdownAffected ? 'power-outline' : site.type === 'CHLORINATION' ? 'water-outline' : 'flash-outline'}
                       size={17}
-                      color={active ? (isDark ? palette.onAccent : palette.teal600) : palette.ink900}
+                      color={siteShutdownAffected ? palette.errorText : active ? (isDark ? palette.onAccent : palette.teal600) : palette.ink900}
                     />
                   </View>
                   <View style={styles.optionCopy}>
                     <View style={styles.optionTitleRow}>
                       <Text style={[styles.optionTitle, active && styles.optionTitleActive]}>{site.name}</Text>
-                      <View style={[styles.badge, active && styles.badgeActive, site.type === 'DEEPWELL' ? styles.badgeDeepwell : null]}>
-                        <Text style={[styles.badgeLabel, active && styles.badgeLabelActive, site.type === 'DEEPWELL' ? styles.badgeLabelDeepwell : null]}>{site.type}</Text>
+                      <View style={styles.optionBadgeRow}>
+                        {siteShutdownAffected ? (
+                          <View style={styles.shutdownBadge}>
+                            <Ionicons name="power" size={11} color={palette.errorText} />
+                            <Text style={styles.shutdownBadgeLabel}>Shutdown</Text>
+                          </View>
+                        ) : null}
+                        <View style={[styles.badge, active && styles.badgeActive, site.type === 'DEEPWELL' ? styles.badgeDeepwell : null]}>
+                          <Text style={[styles.badgeLabel, active && styles.badgeLabelActive, site.type === 'DEEPWELL' ? styles.badgeLabelDeepwell : null]}>{site.type}</Text>
+                        </View>
                       </View>
                     </View>
                     <Text style={[styles.optionSubhead, active && styles.optionSubheadActive]}>
-                      {getSiteDescription(site.type)}
+                      {siteShutdownAffected ? 'Shutdown hours active. Submit form will open only allowed fields.' : getSiteDescription(site.type)}
                     </Text>
                   </View>
                   <View style={[styles.optionArrow, active && styles.optionArrowActive]}>
@@ -948,12 +1015,12 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
                   </View>
                   <View style={[styles.optionMetaPill, active && styles.optionMetaPillActive]}>
                     <Ionicons
-                      name={blocked ? 'lock-closed-outline' : active ? 'checkmark-circle' : 'ellipse-outline'}
+                      name={siteShutdownAffected ? 'power-outline' : blocked ? 'lock-closed-outline' : active ? 'checkmark-circle' : 'ellipse-outline'}
                       size={12}
-                      color={active ? (isDark ? palette.onAccent : palette.teal600) : palette.ink700}
+                      color={siteShutdownAffected ? palette.errorText : active ? (isDark ? palette.onAccent : palette.teal600) : palette.ink700}
                     />
-                    <Text style={[styles.optionMetaText, active && styles.optionMetaTextActive]}>
-                      {blocked ? 'Outside zone' : active ? 'Selected now' : 'Tap to select'}
+                    <Text style={[styles.optionMetaText, active && styles.optionMetaTextActive, siteShutdownAffected ? styles.optionMetaTextShutdown : null]}>
+                      {siteShutdownAffected ? 'Shutdown active' : blocked ? 'Outside zone' : active ? 'Selected now' : 'Tap to select'}
                     </Text>
                   </View>
                 </View>
@@ -1177,6 +1244,10 @@ function createStyles(palette, isDark, responsiveMetrics) {
       opacity: 0.92,
       borderColor: isDark ? '#70464A' : '#F0B8BE',
     },
+    optionShutdown: {
+      borderColor: isDark ? '#8A4B56' : '#F0AAB4',
+      backgroundColor: isDark ? '#2C1920' : '#FFF6F7',
+    },
     optionAccent: {
       position: 'absolute',
       top: 0,
@@ -1187,6 +1258,9 @@ function createStyles(palette, isDark, responsiveMetrics) {
     },
     optionAccentActive: {
       backgroundColor: isDark ? palette.cyan300 : palette.teal500,
+    },
+    optionAccentShutdown: {
+      backgroundColor: isDark ? '#FF9DB1' : '#C75D6B',
     },
     optionTopRow: {
       flexDirection: 'row',
@@ -1208,6 +1282,10 @@ function createStyles(palette, isDark, responsiveMetrics) {
       backgroundColor: isDark ? '#143B53' : '#D7F7F3',
       borderColor: isDark ? '#2CB4DB' : '#7DDDD2',
     },
+    typeIconShutdown: {
+      backgroundColor: isDark ? '#3B1D25' : '#FFF0F2',
+      borderColor: isDark ? '#884653' : '#E7A2AD',
+    },
     optionCopy: {
       flex: 1,
       gap: 4,
@@ -1219,6 +1297,14 @@ function createStyles(palette, isDark, responsiveMetrics) {
       justifyContent: 'space-between',
       gap: 7,
       minWidth: 0,
+    },
+    optionBadgeRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: 5,
+      flexShrink: 0,
     },
     optionTitle: {
       color: palette.ink900,
@@ -1267,6 +1353,9 @@ function createStyles(palette, isDark, responsiveMetrics) {
     optionMetaTextActive: {
       color: palette.ink700,
     },
+    optionMetaTextShutdown: {
+      color: palette.errorText,
+    },
     optionArrow: {
       width: 28,
       height: 44,
@@ -1282,6 +1371,23 @@ function createStyles(palette, isDark, responsiveMetrics) {
       paddingVertical: 5,
       borderRadius: 999,
       backgroundColor: isDark ? '#153A54' : '#E5F4FF',
+    },
+    shutdownBadge: {
+      minHeight: 24,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: isDark ? '#A84257' : '#F0AAB4',
+      backgroundColor: isDark ? '#35121C' : '#FFF0F2',
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+    },
+    shutdownBadgeLabel: {
+      color: palette.errorText,
+      fontSize: 10,
+      fontWeight: '900',
     },
     badgeActive: {
       backgroundColor: isDark ? '#153A54' : '#DBF5F1',
@@ -1314,6 +1420,10 @@ function createStyles(palette, isDark, responsiveMetrics) {
       shadowOffset: { width: 0, height: 8 },
       elevation: 5,
     },
+    selectionCardShutdown: {
+      backgroundColor: isDark ? '#2C1920' : '#FFF6F7',
+      borderColor: isDark ? '#8A4B56' : '#F0AAB4',
+    },
     selectionHeader: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -1328,6 +1438,10 @@ function createStyles(palette, isDark, responsiveMetrics) {
       backgroundColor: isDark ? '#11312D' : '#E2F8F5',
       borderWidth: 1,
       borderColor: isDark ? '#1FAF9E' : '#9DDCD5',
+    },
+    selectionIconShutdown: {
+      backgroundColor: isDark ? '#3B1D25' : '#FFF0F2',
+      borderColor: isDark ? '#884653' : '#E7A2AD',
     },
     selectionCopy: {
       flex: 1,
@@ -1357,10 +1471,17 @@ function createStyles(palette, isDark, responsiveMetrics) {
       paddingHorizontal: 8,
       paddingVertical: 4,
     },
+    selectionStatusPillShutdown: {
+      borderColor: isDark ? '#A84257' : '#F0AAB4',
+      backgroundColor: isDark ? '#35121C' : '#FFF0F2',
+    },
     selectionStatusText: {
       color: palette.teal600,
       fontSize: 10,
       fontWeight: '900',
+    },
+    selectionStatusTextShutdown: {
+      color: palette.errorText,
     },
     checkpointCard: {
       gap: 8,
