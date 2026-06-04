@@ -1,5 +1,6 @@
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Animated,
   Modal,
   Platform,
   ScrollView,
@@ -1123,6 +1124,8 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
   const { width } = useWindowDimensions();
   const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
   const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
+  const historyScrollRef = useRef(null);
+  const scrollTopOpacity = useRef(new Animated.Value(0)).current;
   const isOfficeView = source === 'office-dashboard';
   const canBypassEditTimer = EDIT_TIMER_BYPASS_ROLES.includes(profile?.role);
   const isCompactFilters = width < 430;
@@ -1144,11 +1147,18 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
   const [pickerTarget, setPickerTarget] = useState(null);
   const [operatorSummaryDismissed, setOperatorSummaryDismissed] = useState(false);
+  const [showScrollTop, setShowScrollTop] = useState(false);
   const isOperatorAllSitesView = !isOfficeView && !site?.id;
   const [operatorSiteView, setOperatorSiteView] = useState('all');
   const resolvedTableMode = isOfficeView
     ? tableMode
     : site?.type || (operatorSiteView === 'all' ? '' : operatorSiteView);
+  const historyScopeLabel = isOfficeView
+    ? 'Office dashboard'
+    : isOperatorAllSitesView
+      ? 'All sites'
+      : site?.name || 'Selected site';
+  const historySubtitle = `${historyScopeLabel} · ${profile?.full_name || profile?.email || 'Unknown operator'} · Updated ${formatHeaderUpdatedTime(lastUpdatedAt)}`;
 
   const chlorinationColumns = [
     { key: 'date', label: 'Date', width: 110, render: (row) => formatShortDateTime(row.slot_datetime).slice(0, 10) },
@@ -1425,6 +1435,14 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     loadHistory();
   }, []);
 
+  useEffect(() => {
+    Animated.timing(scrollTopOpacity, {
+      toValue: showScrollTop ? 1 : 0,
+      duration: 180,
+      useNativeDriver: true,
+    }).start();
+  }, [scrollTopOpacity, showScrollTop]);
+
   function handleNativeDateChange(_event, selectedDate) {
     const target = pickerTarget;
     setPickerTarget(null);
@@ -1614,63 +1632,76 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     });
   }
 
-  const headerStatusChips = [
-    {
-      key: 'connected',
-      label: messageTone === 'error' ? 'Connection issue' : 'Connected',
-      tone: messageTone === 'error' ? 'warning' : 'success',
-      iconName: messageTone === 'error' ? 'alert-circle-outline' : 'checkmark-circle-outline',
-      iconColor: messageTone === 'error' ? palette.amber500 : palette.successText,
-    },
-    {
-      key: 'alerts',
-      label: '0 alerts',
-      tone: 'neutral',
-      iconName: 'notifications-outline',
-      iconColor: palette.ink500,
-    },
-    {
-      key: 'updated',
-      label: `Updated ${formatHeaderUpdatedTime(lastUpdatedAt)}`,
-      tone: 'neutral',
-      iconName: 'ellipse',
-      iconColor: palette.teal500,
-    },
-  ];
+  function handleHistoryScroll(event) {
+    const yOffset = event?.nativeEvent?.contentOffset?.y || 0;
+    const shouldShow = yOffset > 360;
+
+    setShowScrollTop((current) => (current === shouldShow ? current : shouldShow));
+  }
+
+  function scrollHistoryToTop() {
+    const scrollTarget = historyScrollRef.current;
+
+    if (typeof scrollTarget?.scrollToPosition === 'function') {
+      scrollTarget.scrollToPosition(0, 0, true);
+      return;
+    }
+
+    if (typeof scrollTarget?.scrollTo === 'function') {
+      scrollTarget.scrollTo({ y: 0, animated: true });
+    }
+  }
 
   return (
     <ScreenShell
-      eyebrow="Live Supabase Workspace"
       title="Reading History"
+      subtitle={historySubtitle}
+      headerActionIcon="arrow-back-outline"
+      headerActionLabel={isOfficeView ? 'Back to dashboard' : 'Back to site selection'}
+      headerActionBare
+      onHeaderActionPress={navigation.goBack}
       showMenuButton
       onAccountEditPress={navigation.openAccountEdit}
       onTutorialPress={navigation.openTutorial}
-      stickyHeader
-      statusChips={headerStatusChips}
       refreshing={loading}
       onRefresh={() => loadHistory()}
       keyboardAware
+      scrollRef={historyScrollRef}
+      onScroll={handleHistoryScroll}
+      scrollEventThrottle={16}
       keyboardAwareProps={{
         extraScrollHeight: 88,
         extraHeight: 120,
       }}
+      floatingOverlay={
+        <Animated.View
+          pointerEvents={showScrollTop ? 'auto' : 'none'}
+          style={[
+            styles.scrollTopOverlay,
+            {
+              opacity: scrollTopOpacity,
+              transform: [
+                {
+                  translateY: scrollTopOpacity.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [12, 0],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
+          <Pressable
+            onPress={scrollHistoryToTop}
+            accessibilityRole="button"
+            accessibilityLabel="Scroll to top"
+            style={({ pressed }) => [styles.scrollTopButton, pressed ? styles.scrollTopButtonPressed : null]}
+          >
+            <Ionicons name="arrow-up" size={22} color={palette.onAccent} />
+          </Pressable>
+        </Animated.View>
+      }
     >
-      {isOfficeView ? (
-        <View style={styles.topBackRow}>
-          <Pressable onPress={navigation.goBack} style={styles.topBackButton}>
-            <Ionicons name="arrow-back" size={14} color={palette.ink900} />
-            <Text style={styles.topBackButtonText}>Back to dashboard</Text>
-          </Pressable>
-        </View>
-      ) : (
-        <View style={styles.topBackRow}>
-          <Pressable onPress={navigation.goBack} style={styles.topBackButton}>
-            <Ionicons name="arrow-back" size={14} color={palette.ink900} />
-            <Text style={styles.topBackButtonText}>Back to Site selection</Text>
-          </Pressable>
-        </View>
-      )}
-
       {!isOfficeView && !operatorSummaryDismissed ? (
         <Card style={styles.operatorSummaryCard}>
           <Pressable onPress={() => setOperatorSummaryDismissed(true)} style={styles.operatorSummaryDismiss}>
@@ -2074,24 +2105,30 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
 
 function createStyles(palette, isDark, responsiveMetrics = getResponsiveMetrics()) {
   return StyleSheet.create(scaleStyleDefinitions({
-    topBackRow: {
-      alignItems: 'flex-start',
+    scrollTopOverlay: {
+      position: 'absolute',
+      right: responsiveMetrics.isTablet ? 28 : 18,
+      bottom: responsiveMetrics.isTablet ? 28 : 20,
+      zIndex: 1500,
+      elevation: 1500,
     },
-    topBackButton: {
-      flexDirection: 'row',
+    scrollTopButton: {
+      width: 50,
+      height: 50,
       alignItems: 'center',
-      gap: 6,
-      borderRadius: 999,
+      justifyContent: 'center',
       borderWidth: 1,
-      borderColor: isDark ? '#1A655E' : '#B4E5DE',
-      backgroundColor: isDark ? '#11312D' : '#E5F5F3',
-      paddingHorizontal: 12,
-      paddingVertical: 8,
+      borderColor: isDark ? '#2DD4BF' : '#0F766E',
+      backgroundColor: palette.navy700,
+      borderRadius: 999,
+      shadowColor: isDark ? '#00D6D0' : '#0F766E',
+      shadowOpacity: isDark ? 0.28 : 0.18,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 8,
     },
-    topBackButtonText: {
-      color: palette.ink900,
-      fontSize: 12,
-      fontWeight: '800',
+    scrollTopButtonPressed: {
+      transform: [{ scale: 0.98 }],
     },
     filterCard: {
       gap: 10,

@@ -87,22 +87,31 @@ export function SegmentChip({ label, iconName, active, onPress, size = 'compact'
   );
 }
 
-export function StatusPill({ label, iconName, iconColor, tone = 'neutral', style }) {
+export function StatusPill({ label, iconName, iconColor, tone = 'neutral', size = 'regular', style }) {
   const { palette, isDark } = useTheme();
   const { width } = useWindowDimensions();
   const metrics = useMemo(() => getResponsiveMetrics(width), [width]);
   const styles = useMemo(() => createStyles(palette, isDark, metrics), [palette, isDark, metrics]);
 
   return (
-    <View style={[styles.statusPill, styles[`statusPill_${tone}`] || styles.statusPill_neutral, style]}>
+    <View style={[
+      styles.statusPill,
+      size === 'compact' && styles.statusPillCompact,
+      styles[`statusPill_${tone}`] || styles.statusPill_neutral,
+      style,
+    ]}>
       {iconName ? (
         <Ionicons
           name={iconName}
-          size={11}
+          size={size === 'compact' ? 8 : 11}
           color={iconColor || palette.heroSubtitle}
         />
       ) : null}
-      <Text style={[styles.statusPillText, styles[`statusPillText_${tone}`] || styles.statusPillText_neutral]}>
+      <Text style={[
+        styles.statusPillText,
+        size === 'compact' && styles.statusPillTextCompact,
+        styles[`statusPillText_${tone}`] || styles.statusPillText_neutral,
+      ]}>
         {label}
       </Text>
     </View>
@@ -566,6 +575,13 @@ function createStyles(palette, isDark, metrics) {
       paddingHorizontal: 6,
       borderRadius: 8,
     },
+    statusPillCompact: {
+      height: 22,
+      minHeight: 22,
+      gap: 3,
+      paddingHorizontal: 4,
+      borderRadius: 7,
+    },
     statusPill_success: {
       borderColor: isDark ? '#167C65' : '#0F9F83',
       backgroundColor: isDark ? '#073C35' : '#E8FFF8',
@@ -586,6 +602,9 @@ function createStyles(palette, isDark, metrics) {
       fontSize: 9,
       fontWeight: '800',
       letterSpacing: 0,
+    },
+    statusPillTextCompact: {
+      fontSize: 7,
     },
     statusPillText_success: {
       color: isDark ? '#82E6D6' : '#0F766E',

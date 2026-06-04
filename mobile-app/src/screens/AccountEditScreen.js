@@ -52,11 +52,11 @@ export default function AccountEditScreen({ navigation }) {
 
   return (
     <ScreenShell
-      eyebrow="User details"
-      title="Edit account"
-      subtitle="Update your sign-in email or password. Profile names stay managed by the office."
+      title="Edit Account"
+      subtitle={`${displayName} · ${profile?.email || '-'}`}
       headerActionIcon="arrow-back-outline"
       headerActionLabel="Back"
+      headerActionBare
       onHeaderActionPress={navigation.goBack}
       keyboardAware
       keyboardAwareProps={{
@@ -73,12 +73,10 @@ export default function AccountEditScreen({ navigation }) {
           </View>
           <View style={styles.cardCopy}>
             <Text numberOfLines={1} style={styles.cardTitle}>{displayName}</Text>
-            <View style={styles.metaRow}>
-              <View style={styles.rolePill}>
-                <Text style={styles.roleText}>{profile?.role || 'user'}</Text>
-              </View>
-              <Text numberOfLines={1} style={styles.cardBody}>{profile?.email || '-'}</Text>
-            </View>
+            <Text numberOfLines={1} style={styles.cardBody}>{profile?.email || '-'}</Text>
+          </View>
+          <View style={styles.rolePill}>
+            <Text style={styles.roleText}>{profile?.role || 'user'}</Text>
           </View>
         </View>
       </Card>
@@ -152,20 +150,16 @@ function createStyles(palette, isDark, responsiveMetrics) {
     cardCopy: {
       flex: 1,
       minWidth: 0,
+      justifyContent: 'center',
+      minHeight: 38,
     },
     cardTitle: {
       color: palette.ink900,
       fontSize: 19,
       fontWeight: '800',
     },
-    metaRow: {
-      marginTop: 6,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-      minWidth: 0,
-    },
     rolePill: {
+      alignSelf: 'flex-start',
       borderWidth: 1,
       borderColor: isDark ? '#1D8C91' : '#8ADCD6',
       backgroundColor: isDark ? '#0F3A35' : '#E5F8F6',
@@ -180,7 +174,7 @@ function createStyles(palette, isDark, responsiveMetrics) {
       textTransform: 'uppercase',
     },
     cardBody: {
-      flex: 1,
+      marginTop: 4,
       color: palette.ink700,
       fontSize: 13,
       lineHeight: 18,

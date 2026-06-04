@@ -1,5 +1,5 @@
-import { createContext, useMemo, useRef, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, Platform, findNodeHandle, useWindowDimensions } from 'react-native';
+import { createContext, useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, Platform, findNodeHandle, useWindowDimensions } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useAuth } from '../context/AuthContext';
@@ -16,8 +16,10 @@ export default function ScreenShell({
   title,
   subtitle,
   statusChips = [],
+  statusChipsInline = false,
   headerActionIcon,
   headerActionLabel,
+  headerActionBare = false,
   onHeaderActionPress,
   showMenuButton = false,
   onAccountEditPress,
@@ -66,7 +68,7 @@ export default function ScreenShell({
     [keyboardAware]
   );
 
-  const renderStatusChips = (style) =>
+  const renderStatusChips = (style, pillSize = 'regular') =>
     statusChips.length ? (
       <View style={[styles.statusChipRow, style]}>
         {statusChips.map((chip) => (
@@ -76,6 +78,7 @@ export default function ScreenShell({
             iconName={chip.iconName}
             iconColor={chip.iconColor}
             tone={chip.tone}
+            size={pillSize}
           />
         ))}
       </View>
@@ -101,24 +104,31 @@ export default function ScreenShell({
       ) : null}
       <View style={styles.hero}>
         <View style={styles.heroTopRow}>
-          <View style={styles.heroIdentityGroup}>
+          <View style={[styles.heroIdentityGroup, headerActionBare && styles.heroIdentityGroupBare]}>
             {headerActionIcon && onHeaderActionPress ? (
               <Pressable
                 onPress={onHeaderActionPress}
                 accessibilityRole="button"
                 accessibilityLabel={headerActionLabel || 'Header action'}
-                style={({ pressed }) => [styles.headerActionButton, pressed && styles.menuButtonPressed]}
+                style={({ pressed }) => [
+                  styles.headerActionButton,
+                  headerActionBare && styles.headerActionButtonBare,
+                  pressed && styles.menuButtonPressed,
+                ]}
               >
-                <Ionicons name={headerActionIcon} size={18} color={palette.cyan300} />
+                <Ionicons name={headerActionIcon} size={headerActionBare ? 22 : 18} color={palette.cyan300} />
               </Pressable>
             ) : null}
             <View style={styles.heroCopy}>
               {eyebrow ? <Text numberOfLines={1} style={styles.eyebrow}>{eyebrow}</Text> : null}
-              <Text numberOfLines={1} style={styles.title}>{title}</Text>
+              <View style={styles.titleRow}>
+                <Text numberOfLines={1} style={[styles.title, statusChipsInline && styles.titleInline]}>{title}</Text>
+                {statusChipsInline ? renderStatusChips(styles.statusChipRowInline, 'compact') : null}
+              </View>
               {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
             </View>
           </View>
-          {renderStatusChips(styles.statusChipRowHeader)}
+          {!statusChipsInline ? renderStatusChips(styles.statusChipRowHeader) : null}
           {showMenuButton ? (
             <View style={styles.accountControlWrap}>
               <Pressable
@@ -136,17 +146,17 @@ export default function ScreenShell({
                   style={styles.accountDropdown}
                   onStartShouldSetResponder={() => true}
                 >
+                  <View style={styles.accountMenuHeader}>
+                    <Text style={styles.accountEyebrow}>User details</Text>
+                  </View>
                   <View style={styles.accountMenuTop}>
                     <View style={styles.accountAvatar}>
                       <Ionicons name="person-circle-outline" size={18} color={palette.cyan300} />
                     </View>
                     <View style={styles.accountCopy}>
-                      <Text style={styles.accountEyebrow}>User details</Text>
                       <Text numberOfLines={1} style={styles.accountName}>{profile?.full_name || profile?.email || 'Office user'}</Text>
                       <Text numberOfLines={1} style={styles.accountEmail}>{profile?.email || '-'}</Text>
                     </View>
-                  </View>
-                  <View style={styles.accountMenuBottom}>
                     <View style={styles.accountRolePill}>
                       <Text style={styles.accountRoleText}>{profile?.role || 'user'}</Text>
                     </View>
@@ -201,7 +211,7 @@ export default function ScreenShell({
             />
           ) : null}
         </View>
-        {renderStatusChips(styles.statusChipRowBelow)}
+        {!statusChipsInline ? renderStatusChips(styles.statusChipRowBelow, 'compact') : null}
       </View>
     </View>
   );
@@ -289,6 +299,74 @@ export default function ScreenShell({
 
 function PressableThemeToggle({ isDark, palette, onPress, styles, menuItem = false }) {
   const iconColor = menuItem ? palette.ink900 : palette.onAccent;
+  const themeSwitchAnim = useRef(new Animated.Value(isDark ? 1 : 0)).current;
+  const themeMoonScale = themeSwitchAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 0],
+  });
+  const themeMoonRotate = themeSwitchAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '-90deg'],
+  });
+  const themeSunScale = themeSwitchAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 1],
+  });
+  const themeSunRotate = themeSwitchAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['90deg', '0deg'],
+  });
+  const themeIconBackground = themeSwitchAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['rgba(255,255,255,0.92)', 'rgba(15,23,42,0.88)'],
+  });
+
+  useEffect(() => {
+    if (menuItem) {
+      return;
+    }
+
+    Animated.timing(themeSwitchAnim, {
+      toValue: isDark ? 1 : 0,
+      duration: 220,
+      useNativeDriver: false,
+    }).start();
+  }, [isDark, menuItem, themeSwitchAnim]);
+
+  if (!menuItem) {
+    return (
+      <Pressable
+        accessibilityRole="switch"
+        accessibilityState={{ checked: isDark }}
+        accessibilityLabel={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+        onPress={onPress}
+        style={({ pressed }) => [styles.themeSwitchWrap, pressed ? styles.themeSwitchPressed : null]}
+      >
+        <Animated.View style={[styles.themeIconToggle, { backgroundColor: themeIconBackground }]}>
+          <Animated.View
+            style={[
+              styles.themeIconLayer,
+              {
+                transform: [{ rotate: themeMoonRotate }, { scale: themeMoonScale }],
+              },
+            ]}
+          >
+            <Ionicons name="moon" size={25} color="#1F2937" />
+          </Animated.View>
+          <Animated.View
+            style={[
+              styles.themeIconLayer,
+              {
+                transform: [{ rotate: themeSunRotate }, { scale: themeSunScale }],
+              },
+            ]}
+          >
+            <Ionicons name="sunny" size={26} color="#FACC15" />
+          </Animated.View>
+        </Animated.View>
+      </Pressable>
+    );
+  }
 
   return (
     <Pressable
@@ -299,7 +377,7 @@ function PressableThemeToggle({ isDark, palette, onPress, styles, menuItem = fal
         pressed && styles.themeTogglePressed,
       ]}
     >
-      <View style={styles.themeToggleContent}>
+      <View style={[styles.themeToggleContent, menuItem && styles.themeToggleContentMenuItem]}>
         <Ionicons
           name={isDark ? 'sunny-outline' : 'moon-outline'}
           size={menuItem ? 15 : 14}
@@ -377,11 +455,21 @@ function createStyles(palette, isDark, metrics) {
       minWidth: 0,
       maxWidth: metrics.isTablet ? 270 : undefined,
     },
+    heroIdentityGroupBare: {
+      gap: 8,
+    },
     menuButtonPressed: {
       transform: [{ scale: 0.98 }],
     },
     heroCopy: {
       flexShrink: 1,
+      minWidth: 0,
+      justifyContent: 'center',
+    },
+    titleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
       minWidth: 0,
     },
     headerActionButton: {
@@ -394,6 +482,13 @@ function createStyles(palette, isDark, metrics) {
       backgroundColor: isDark ? '#19324A' : 'rgba(248,252,255,0.08)',
       borderRadius: 8,
     },
+    headerActionButtonBare: {
+      width: 26,
+      height: 34,
+      borderWidth: 0,
+      backgroundColor: 'transparent',
+      borderRadius: 0,
+    },
     eyebrow: {
       color: palette.cyan300,
       fontSize: 10,
@@ -405,7 +500,11 @@ function createStyles(palette, isDark, metrics) {
     title: {
       color: palette.onAccent,
       fontSize: 20,
+      lineHeight: 24,
       fontWeight: '800',
+    },
+    titleInline: {
+      flexShrink: 1,
     },
     subtitle: {
       marginTop: 4,
@@ -430,9 +529,15 @@ function createStyles(palette, isDark, metrics) {
     },
     statusChipRowBelow: {
       display: metrics.isTablet ? 'none' : 'flex',
-      justifyContent: 'center',
-      alignSelf: 'center',
-      marginTop: 10,
+      justifyContent: 'flex-start',
+      alignSelf: 'flex-start',
+      marginTop: 8,
+      marginLeft: metrics.contentPadding + 34,
+      maxWidth: '80%',
+    },
+    statusChipRowInline: {
+      flexShrink: 0,
+      gap: 3,
     },
     accountControlWrap: {
       position: 'relative',
@@ -455,15 +560,15 @@ function createStyles(palette, isDark, metrics) {
     },
     accountDropdown: {
       position: 'absolute',
-      top: 48,
+      top: 44,
       right: 0,
-      width: metrics.isTablet ? 330 : 292,
+      width: metrics.isTablet ? 310 : 268,
       borderWidth: 1,
       borderColor: isDark ? '#2B5877' : 'rgba(191,212,231,0.92)',
       backgroundColor: isDark ? palette.card : '#F8FCFF',
-      padding: 12,
+      padding: 10,
       borderRadius: 8,
-      gap: 10,
+      gap: 8,
       shadowColor: '#000000',
       shadowOpacity: isDark ? 0.24 : 0.12,
       shadowRadius: 16,
@@ -473,12 +578,19 @@ function createStyles(palette, isDark, metrics) {
     },
     accountMenuTop: {
       flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 8,
+      minHeight: 32,
+    },
+    accountMenuHeader: {
+      flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
+      justifyContent: 'flex-start',
     },
     accountAvatar: {
-      width: 34,
-      height: 34,
+      width: 30,
+      height: 30,
+      marginTop: 1,
       alignItems: 'center',
       justifyContent: 'center',
       borderWidth: 1,
@@ -489,6 +601,7 @@ function createStyles(palette, isDark, metrics) {
     accountCopy: {
       flex: 1,
       minWidth: 0,
+      justifyContent: 'center',
     },
     accountEyebrow: {
       color: palette.ink500,
@@ -499,32 +612,29 @@ function createStyles(palette, isDark, metrics) {
     accountName: {
       marginTop: 2,
       color: palette.ink900,
-      fontSize: 13,
+      fontSize: 12,
       fontWeight: '900',
     },
     accountEmail: {
       marginTop: 1,
       color: palette.ink500,
-      fontSize: 10,
+      fontSize: 9,
       fontWeight: '700',
     },
-    accountMenuBottom: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'flex-start',
-      gap: 8,
-    },
     accountRolePill: {
+      alignSelf: 'center',
+      marginTop: 0,
       borderWidth: 1,
       borderColor: isDark ? '#1D8C91' : '#8ADCD6',
       backgroundColor: isDark ? '#0F3A35' : '#E5F8F6',
-      paddingHorizontal: 9,
-      paddingVertical: 5,
+      paddingHorizontal: 6,
+      paddingVertical: 3,
       borderRadius: 999,
+      maxWidth: 88,
     },
     accountRoleText: {
       color: palette.ink900,
-      fontSize: 10,
+      fontSize: 8,
       fontWeight: '900',
       textTransform: 'uppercase',
     },
@@ -535,12 +645,12 @@ function createStyles(palette, isDark, metrics) {
     accountActionButton: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'center',
-      gap: 6,
+      justifyContent: 'flex-start',
+      gap: 8,
       borderWidth: 1,
-      paddingHorizontal: 11,
+      paddingHorizontal: 14,
       paddingVertical: 8,
-      minHeight: 42,
+      minHeight: 38,
       borderRadius: 9,
       width: '100%',
     },
@@ -569,6 +679,35 @@ function createStyles(palette, isDark, metrics) {
     accountSignOutText: {
       color: isDark ? '#F7CA72' : '#9A6700',
     },
+    themeSwitchWrap: {
+      width: 46,
+      height: 46,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    themeSwitchPressed: {
+      transform: [{ scale: 0.97 }],
+    },
+    themeIconToggle: {
+      width: 42,
+      height: 42,
+      borderRadius: 21,
+      alignItems: 'center',
+      justifyContent: 'center',
+      position: 'relative',
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(250, 204, 21, 0.32)' : 'rgba(255, 255, 255, 0.78)',
+      shadowColor: '#000000',
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: isDark ? 0.22 : 0.1,
+      shadowRadius: 16,
+      elevation: 8,
+    },
+    themeIconLayer: {
+      position: 'absolute',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
     themeToggle: {
       height: 32,
       borderWidth: 1,
@@ -582,7 +721,7 @@ function createStyles(palette, isDark, metrics) {
       justifyContent: 'center',
     },
     themeToggleMenuItem: {
-      height: 42,
+      height: 38,
       width: '100%',
       borderColor: isDark ? '#1D8C91' : '#8ADCD6',
       backgroundColor: isDark ? '#0F3A35' : '#E5F8F6',
@@ -596,6 +735,12 @@ function createStyles(palette, isDark, metrics) {
       alignItems: 'center',
       justifyContent: 'center',
       gap: 6,
+    },
+    themeToggleContentMenuItem: {
+      width: '100%',
+      justifyContent: 'flex-start',
+      paddingHorizontal: 4,
+      gap: 8,
     },
     themeToggleText: {
       color: palette.onAccent,

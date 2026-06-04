@@ -11,6 +11,7 @@ export default function PrimaryButton({
   tone = 'primary',
   icon = null,
   labelStyle = null,
+  style = null,
 }) {
   const { palette, isDark } = useTheme();
   const { width } = useWindowDimensions();
@@ -25,6 +26,7 @@ export default function PrimaryButton({
       style={({ pressed }) => [
         styles.button,
         isPrimary ? styles.primary : styles.secondary,
+        style,
         (disabled || loading) && styles.disabled,
         pressed && !disabled && !loading ? styles.pressed : null,
       ]}
