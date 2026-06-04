@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Card from '../components/Card';
 import FormField from '../components/FormField';
 import MessageBanner from '../components/MessageBanner';
@@ -33,6 +34,7 @@ import LottieView from 'lottie-react-native';
 
 const EDIT_WINDOW_MS = 5 * 60 * 1000;
 const EDIT_TIMER_BYPASS_ROLES = ['supervisor', 'manager', 'general_manager', 'admin'];
+const dismissedOperatorTipsSessionKeys = new Set();
 
 const CHLORINATION_BASE_FIELDS = [
   'pressure',
@@ -184,11 +186,21 @@ function isReadingEditWindowOpen(reading, now = new Date()) {
 }
 
 export default function SubmitReadingScreen({ navigation, site, editingReading, editReturnParams, previewOnly = false }) {
-  const { profile } = useAuth();
+  const { profile, session } = useAuth();
   const { palette, isDark } = useTheme();
   const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
-  const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
+  const operatorTipsSessionKey = useMemo(() => {
+    const userId = session?.user?.id || profile?.id;
+    const signedInAt = session?.user?.last_sign_in_at || session?.access_token;
+
+    return userId ? `${userId}:${signedInAt || 'current'}` : 'guest';
+  }, [profile?.id, session?.access_token, session?.user?.id, session?.user?.last_sign_in_at]);
+  const styles = useMemo(
+    () => createStyles(palette, isDark, responsiveMetrics, insets),
+    [palette, isDark, responsiveMetrics, insets]
+  );
   const fieldRefs = useRef({});
   const screenScrollRef = useRef(null);
   const [remarks, setRemarks] = useState('');
@@ -202,7 +214,9 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
   const [showSuccessAnim, setShowSuccessAnim] = useState(false)
   const [syncingOffline, setSyncingOffline] = useState(false);
   const [offlineCount, setOfflineCount] = useState(0);
-  const [tipsDismissed, setTipsDismissed] = useState(false);
+  const [tipsDismissed, setTipsDismissed] = useState(() => (
+    dismissedOperatorTipsSessionKeys.has(operatorTipsSessionKey)
+  ));
   const [currentSlot, setCurrentSlot] = useState(() => roundDownTo30MinSlot(new Date()));
   const [invalidFields, setInvalidFields] = useState(() => new Set());
   const [resultTone, setResultTone] = useState('info');
@@ -222,6 +236,15 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
   const [draftReady, setDraftReady] = useState(false);
   const [editNow, setEditNow] = useState(() => new Date());
   const [parameterJump, setParameterJump] = useState({ status: null, index: -1 });
+
+  useEffect(() => {
+    setTipsDismissed(dismissedOperatorTipsSessionKeys.has(operatorTipsSessionKey));
+  }, [operatorTipsSessionKey]);
+
+  function dismissOperatorTips() {
+    dismissedOperatorTipsSessionKeys.add(operatorTipsSessionKey);
+    setTipsDismissed(true);
+  }
 
   const isEditingReading = Boolean(editingReading?.id);
   const canBypassEditTimer = EDIT_TIMER_BYPASS_ROLES.includes(profile?.role);
@@ -266,6 +289,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
   const editWindowOpen = !isEditingReading || canBypassEditTimer || isReadingEditWindowOpen(editingReading, editNow);
   const isChlorination = site?.type === 'CHLORINATION';
   const isDeepwell = site?.type === 'DEEPWELL';
+  const formTitle = isChlorination ? 'Chlorination Form' : isDeepwell ? 'Deepwell Form' : 'Reading Form';
   const operationFeatureEnabled = isDeepwell;
   const shiftBatchEnabled = isShiftBatchEntryWindow(formSlot);
   const shiftEdgeSlotEnabled = isShiftFirstOrLastReadingSlot(formSlot);
@@ -1419,13 +1443,13 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
       </Modal>
 
       <ScreenShell
-        eyebrow="Reading form"
-        title={isEditingReading ? 'Edit reading' : 'Submit reading'}
-        subtitle={`${site?.name || 'Unknown site'} (${site?.type || 'Unknown type'}) - ${
+        title={formTitle}
+        subtitle={`${site?.name || 'Unknown site'} · ${
           profile?.full_name || profile?.email || 'Unknown operator'
         }`}
         headerActionIcon="arrow-back-outline"
         headerActionLabel="Back to site selection"
+        headerActionBare
         onHeaderActionPress={navigation.goBack}
         showMenuButton
         onAccountEditPress={navigation.openAccountEdit}
@@ -1438,13 +1462,15 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
           },
         }}
         floatingOverlay={
-          <View style={styles.stickyActions}>
+          <View pointerEvents="box-none" style={styles.stickyActions}>
+            <View pointerEvents="none" style={styles.stickyActionsMask} />
             <View style={styles.stickyActionsInner}>
               <PrimaryButton
                 label={submitButtonLabel}
                 onPress={handleSubmit}
                 loading={submitting || locationChecking}
                 disabled={submitButtonDisabled}
+                style={styles.floatingSubmitButton}
                 icon={<Ionicons name="save-outline" size={16} color={palette.onAccent} />}
               />
             </View>
@@ -1773,7 +1799,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
 
         {!tipsDismissed ? (
           <Card style={styles.tipCard}>
-            <Pressable onPress={() => setTipsDismissed(true)} style={styles.tipDismiss}>
+            <Pressable onPress={dismissOperatorTips} style={styles.tipDismiss}>
               <Ionicons name="close" size={14} color={palette.ink700} />
             </Pressable>
             <View style={styles.tipHeader}>
@@ -2133,7 +2159,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
   );
 }
 
-function createStyles(palette, isDark, responsiveMetrics) {
+function createStyles(palette, isDark, responsiveMetrics, insets) {
   return StyleSheet.create(scaleStyleDefinitions({
     keyboardWrap: {
       flex: 1,
@@ -2978,20 +3004,29 @@ function createStyles(palette, isDark, responsiveMetrics) {
       bottom: 0,
       zIndex: 1200,
       elevation: 1200,
-      paddingTop: 10,
-      paddingBottom: 12,
-      backgroundColor: isDark ? 'rgba(16, 28, 40, 0.96)' : 'rgba(244, 250, 255, 0.96)',
-      borderTopWidth: 1,
-      borderTopColor: isDark ? '#274158' : '#C9DCEB',
+      alignItems: 'center',
+      paddingHorizontal: responsiveMetrics.contentPadding,
+      paddingTop: 0,
+      paddingBottom: Math.max(insets.bottom + 14, 14),
+    },
+    stickyActionsMask: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: 0,
+      height: Math.max(insets.bottom + 40, 40),
+      backgroundColor: palette.canvas,
     },
     stickyActionsInner: {
       width: '100%',
-      maxWidth: responsiveMetrics.contentMaxWidth,
-      alignSelf: 'center',
-      paddingHorizontal: responsiveMetrics.contentPadding,
+      maxWidth: Math.min(responsiveMetrics.contentMaxWidth, 420),
+    },
+    floatingSubmitButton: {
+      borderWidth: 4,
+      borderColor: '#FFFFFF',
     },
     actionsSpacer: {
-      height: 92,
+      height: 112 + insets.bottom,
     },
   }, responsiveMetrics, {
     exclude: ['successAnimationOverlay.flex', 'confirmOverlay.flex', 'confirmButtonRow.flexDirection'],
