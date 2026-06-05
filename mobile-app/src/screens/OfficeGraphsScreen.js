@@ -373,6 +373,39 @@ const MONTHLY_BASE_SPACING_COMPACT = 32;
 const MONTHLY_BASE_SPACING_WIDE = 42;
 const MONTHLY_CONTENT_WIDTH_COMPACT = 560;
 const MONTHLY_CONTENT_WIDTH_WIDE = 820;
+
+function getChartLayout({ rowsLength, screenWidth, isWide, zoomLevel }) {
+  const baseBarWidth = isWide ? MONTHLY_BASE_BAR_WIDTH_WIDE : MONTHLY_BASE_BAR_WIDTH_COMPACT;
+  const baseSpacing = isWide ? MONTHLY_BASE_SPACING_WIDE : MONTHLY_BASE_SPACING_COMPACT;
+  const rawViewportWidth = Math.max(280, screenWidth - (isWide ? 120 : 72));
+  const minimumContentWidth = isWide ? MONTHLY_CONTENT_WIDTH_WIDE : MONTHLY_CONTENT_WIDTH_COMPACT;
+  const chartContentWidth = Math.max(
+    rawViewportWidth,
+    Math.round(rowsLength * (baseBarWidth + baseSpacing) * zoomLevel) + 124,
+    minimumContentWidth
+  );
+
+  return {
+    baseBarWidth,
+    baseSpacing,
+    chartContentWidth,
+  };
+}
+
+function ChartScrollFrame({ children, styles }) {
+  return (
+    <ScrollView
+      horizontal
+      nestedScrollEnabled
+      showsHorizontalScrollIndicator
+      style={styles.chartHorizontalScroll}
+      contentContainerStyle={styles.chartHorizontalContent}
+    >
+      {children}
+    </ScrollView>
+  );
+}
+
 const MONTH_PICKER_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const FULL_MONTH_PICKER_LABELS = [
   'January',
@@ -561,13 +594,14 @@ function MonthlyProductionCard({
     1
   );
   const chartHeight = isWide ? CHART_HEIGHT_WIDE : CHART_HEIGHT_COMPACT;
-  const baseBarWidth = isWide ? MONTHLY_BASE_BAR_WIDTH_WIDE : MONTHLY_BASE_BAR_WIDTH_COMPACT;
-  const baseSpacing = isWide ? MONTHLY_BASE_SPACING_WIDE : MONTHLY_BASE_SPACING_COMPACT;
+  const { baseBarWidth, baseSpacing, chartContentWidth } = getChartLayout({
+    rowsLength: rows.length,
+    screenWidth,
+    isWide,
+    zoomLevel,
+  });
   const barWidth = Math.round(baseBarWidth * zoomLevel);
   const spacing = Math.round(baseSpacing * zoomLevel);
-  const rawViewportWidth = Math.max(280, screenWidth - (isWide ? 120 : 72));
-  const baseContentWidth = Math.max(rows.length * (baseBarWidth + baseSpacing) + 90, isWide ? MONTHLY_CONTENT_WIDTH_WIDE : MONTHLY_CONTENT_WIDTH_COMPACT);
-  const chartViewportWidth = Math.min(rawViewportWidth, Math.max(280, baseContentWidth - 120));
   const chartMaxValue = maxVolume <= 0 ? 1 : Math.ceil(maxVolume * 1.18);
   const hasData = rows.some((row) => row.production > 0);
   const valueLabelWidth = Math.round(Math.max(52, Math.min(74, barWidth + 28)));
@@ -640,41 +674,41 @@ function MonthlyProductionCard({
       </View>
 
       <View style={styles.productionChart}>
-        <BarChart
-          key={chartKey}
-          data={chartData}
-          width={chartViewportWidth}
-          height={chartHeight}
-          barWidth={barWidth}
-          spacing={spacing}
-          initialSpacing={18}
-          endSpacing={18}
-          maxValue={chartMaxValue}
-          noOfSections={4}
-          showGradient
-          roundedBottom={false}
-          barBorderTopLeftRadius={5}
-          barBorderTopRightRadius={5}
-          barBorderBottomLeftRadius={0}
-          barBorderBottomRightRadius={0}
-          isAnimated
-          animationDuration={800}
-          showValuesAsTopLabel={false}
-          xAxisColor={palette.lineStrong}
-          yAxisColor={palette.lineStrong}
-          rulesColor={palette.line}
-          rulesThickness={1}
-          yAxisTextStyle={styles.chartAxisLabel}
-          xAxisLabelTextStyle={styles.chartMonthLabel}
-          yAxisLabelWidth={56}
-          xAxisTextNumberOfLines={1}
-          labelsExtraHeight={28}
-          formatYLabel={(value) => formatNumber(value, 0)}
-          disableScroll={false}
-          nestedScrollEnabled
-          showScrollIndicator
-          indicatorColor={isDark ? 'white' : 'black'}
-        />
+        <ChartScrollFrame styles={styles}>
+          <BarChart
+            key={chartKey}
+            data={chartData}
+            width={chartContentWidth}
+            height={chartHeight}
+            barWidth={barWidth}
+            spacing={spacing}
+            initialSpacing={18}
+            endSpacing={18}
+            maxValue={chartMaxValue}
+            noOfSections={4}
+            showGradient
+            roundedBottom={false}
+            barBorderTopLeftRadius={5}
+            barBorderTopRightRadius={5}
+            barBorderBottomLeftRadius={0}
+            barBorderBottomRightRadius={0}
+            isAnimated
+            animationDuration={800}
+            showValuesAsTopLabel={false}
+            xAxisColor={palette.lineStrong}
+            yAxisColor={palette.lineStrong}
+            rulesColor={palette.line}
+            rulesThickness={1}
+            yAxisTextStyle={styles.chartAxisLabel}
+            xAxisLabelTextStyle={styles.chartMonthLabel}
+            yAxisLabelWidth={56}
+            xAxisTextNumberOfLines={1}
+            labelsExtraHeight={28}
+            formatYLabel={(value) => formatNumber(value, 0)}
+            disableScroll
+            nestedScrollEnabled
+          />
+        </ChartScrollFrame>
         {isLoadingYear ? (
           <View style={styles.chartLoadingOverlay} pointerEvents="none">
             <ActivityIndicator size="small" color={palette.teal600} />
@@ -729,13 +763,14 @@ function MonthlyPowerConsumptionCard({
     1
   );
   const chartHeight = isWide ? CHART_HEIGHT_WIDE : CHART_HEIGHT_COMPACT;
-  const baseBarWidth = isWide ? MONTHLY_BASE_BAR_WIDTH_WIDE : MONTHLY_BASE_BAR_WIDTH_COMPACT;
-  const baseSpacing = isWide ? MONTHLY_BASE_SPACING_WIDE : MONTHLY_BASE_SPACING_COMPACT;
+  const { baseBarWidth, baseSpacing, chartContentWidth } = getChartLayout({
+    rowsLength: rows.length,
+    screenWidth,
+    isWide,
+    zoomLevel,
+  });
   const barWidth = Math.round(baseBarWidth * zoomLevel);
   const spacing = Math.round(baseSpacing * zoomLevel);
-  const rawViewportWidth = Math.max(280, screenWidth - (isWide ? 120 : 72));
-  const baseContentWidth = Math.max(rows.length * (baseBarWidth + baseSpacing) + 90, isWide ? MONTHLY_CONTENT_WIDTH_WIDE : MONTHLY_CONTENT_WIDTH_COMPACT);
-  const chartViewportWidth = Math.min(rawViewportWidth, Math.max(280, baseContentWidth - 120));
   const chartMaxValue = maxPower <= 0 ? 1 : Math.ceil(maxPower * 1.22);
   const hasData = rows.some((row) => row.totalPower > 0);
   const minVisibleChlorinationPower = chartMaxValue * 0.018;
@@ -837,36 +872,36 @@ function MonthlyPowerConsumptionCard({
       </View>
 
       <View style={styles.productionChart}>
-        <BarChart
-          key={chartKey}
-          stackData={chartData}
-          width={chartViewportWidth}
-          height={chartHeight}
-          barWidth={barWidth}
-          spacing={spacing}
-          initialSpacing={18}
-          endSpacing={18}
-          maxValue={chartMaxValue}
-          noOfSections={5}
-          roundedTop
-          roundedBottom={false}
-          isAnimated
-          animationDuration={800}
-          xAxisColor={palette.lineStrong}
-          yAxisColor={palette.lineStrong}
-          rulesColor={palette.line}
-          rulesThickness={1}
-          yAxisTextStyle={styles.chartAxisLabel}
-          xAxisLabelTextStyle={styles.chartMonthLabel}
-          yAxisLabelWidth={58}
-          xAxisTextNumberOfLines={1}
-          labelsExtraHeight={28}
-          formatYLabel={(value) => formatNumber(value, 0)}
-          disableScroll={false}
-          nestedScrollEnabled
-          showScrollIndicator
-          indicatorColor={isDark ? 'white' : 'black'}
-        />
+        <ChartScrollFrame styles={styles}>
+          <BarChart
+            key={chartKey}
+            stackData={chartData}
+            width={chartContentWidth}
+            height={chartHeight}
+            barWidth={barWidth}
+            spacing={spacing}
+            initialSpacing={18}
+            endSpacing={18}
+            maxValue={chartMaxValue}
+            noOfSections={5}
+            roundedTop
+            roundedBottom={false}
+            isAnimated
+            animationDuration={800}
+            xAxisColor={palette.lineStrong}
+            yAxisColor={palette.lineStrong}
+            rulesColor={palette.line}
+            rulesThickness={1}
+            yAxisTextStyle={styles.chartAxisLabel}
+            xAxisLabelTextStyle={styles.chartMonthLabel}
+            yAxisLabelWidth={58}
+            xAxisTextNumberOfLines={1}
+            labelsExtraHeight={28}
+            formatYLabel={(value) => formatNumber(value, 0)}
+            disableScroll
+            nestedScrollEnabled
+          />
+        </ChartScrollFrame>
         {isLoadingYear ? (
           <View style={styles.chartLoadingOverlay} pointerEvents="none">
             <ActivityIndicator size="small" color={palette.teal600} />
@@ -928,13 +963,14 @@ function MonthlyChemicalUsageCard({
     1
   );
   const chartHeight = isWide ? CHART_HEIGHT_WIDE : CHART_HEIGHT_COMPACT;
-  const baseBarWidth = isWide ? MONTHLY_BASE_BAR_WIDTH_WIDE : MONTHLY_BASE_BAR_WIDTH_COMPACT;
-  const baseSpacing = isWide ? MONTHLY_BASE_SPACING_WIDE : MONTHLY_BASE_SPACING_COMPACT;
+  const { baseBarWidth, baseSpacing, chartContentWidth } = getChartLayout({
+    rowsLength: rows.length,
+    screenWidth,
+    isWide,
+    zoomLevel,
+  });
   const barWidth = Math.round(baseBarWidth * zoomLevel);
   const spacing = Math.round(baseSpacing * zoomLevel);
-  const rawViewportWidth = Math.max(280, screenWidth - (isWide ? 120 : 72));
-  const baseContentWidth = Math.max(rows.length * (baseBarWidth + baseSpacing) + 90, isWide ? MONTHLY_CONTENT_WIDTH_WIDE : MONTHLY_CONTENT_WIDTH_COMPACT);
-  const chartViewportWidth = Math.min(rawViewportWidth, Math.max(280, baseContentWidth - 120));
   const chartMaxValue = maxUsage <= 0 ? 1 : Math.ceil(maxUsage * 1.22);
   const hasData = rows.some((row) => row.totalUsage > 0 || row.chlorineUsage > 0 || row.peroxideUsage > 0);
   const segmentValueFontSize = zoomLevel >= 1.35 ? 8 : 7;
@@ -1051,36 +1087,36 @@ function MonthlyChemicalUsageCard({
       </View>
 
       <View style={styles.productionChart}>
-        <BarChart
-          key={chartKey}
-          stackData={chartData}
-          width={chartViewportWidth}
-          height={chartHeight}
-          barWidth={barWidth}
-          spacing={spacing}
-          initialSpacing={18}
-          endSpacing={18}
-          maxValue={chartMaxValue}
-          noOfSections={5}
-          roundedTop
-          roundedBottom={false}
-          isAnimated
-          animationDuration={800}
-          xAxisColor={palette.lineStrong}
-          yAxisColor={palette.lineStrong}
-          rulesColor={palette.line}
-          rulesThickness={1}
-          yAxisTextStyle={styles.chartAxisLabel}
-          xAxisLabelTextStyle={styles.chartMonthLabel}
-          yAxisLabelWidth={58}
-          xAxisTextNumberOfLines={1}
-          labelsExtraHeight={28}
-          formatYLabel={(value) => formatNumber(value, 0)}
-          disableScroll={false}
-          nestedScrollEnabled
-          showScrollIndicator
-          indicatorColor={isDark ? 'white' : 'black'}
-        />
+        <ChartScrollFrame styles={styles}>
+          <BarChart
+            key={chartKey}
+            stackData={chartData}
+            width={chartContentWidth}
+            height={chartHeight}
+            barWidth={barWidth}
+            spacing={spacing}
+            initialSpacing={18}
+            endSpacing={18}
+            maxValue={chartMaxValue}
+            noOfSections={5}
+            roundedTop
+            roundedBottom={false}
+            isAnimated
+            animationDuration={800}
+            xAxisColor={palette.lineStrong}
+            yAxisColor={palette.lineStrong}
+            rulesColor={palette.line}
+            rulesThickness={1}
+            yAxisTextStyle={styles.chartAxisLabel}
+            xAxisLabelTextStyle={styles.chartMonthLabel}
+            yAxisLabelWidth={58}
+            xAxisTextNumberOfLines={1}
+            labelsExtraHeight={28}
+            formatYLabel={(value) => formatNumber(value, 0)}
+            disableScroll
+            nestedScrollEnabled
+          />
+        </ChartScrollFrame>
         {isLoadingYear ? (
           <View style={styles.chartLoadingOverlay} pointerEvents="none">
             <ActivityIndicator size="small" color={palette.teal600} />
@@ -1144,13 +1180,14 @@ function DailyProductionCard({
     1
   );
   const chartHeight = isWide ? CHART_HEIGHT_WIDE : CHART_HEIGHT_COMPACT;
-  const baseBarWidth = isWide ? MONTHLY_BASE_BAR_WIDTH_WIDE : MONTHLY_BASE_BAR_WIDTH_COMPACT;
-  const baseSpacing = isWide ? MONTHLY_BASE_SPACING_WIDE : MONTHLY_BASE_SPACING_COMPACT;
+  const { baseBarWidth, baseSpacing, chartContentWidth } = getChartLayout({
+    rowsLength: rows.length,
+    screenWidth,
+    isWide,
+    zoomLevel,
+  });
   const barWidth = Math.round(baseBarWidth * zoomLevel);
   const spacing = Math.round(baseSpacing * zoomLevel);
-  const rawViewportWidth = Math.max(280, screenWidth - (isWide ? 120 : 72));
-  const baseContentWidth = Math.max(rows.length * (baseBarWidth + baseSpacing) + 90, isWide ? MONTHLY_CONTENT_WIDTH_WIDE : MONTHLY_CONTENT_WIDTH_COMPACT);
-  const chartViewportWidth = Math.min(rawViewportWidth, Math.max(280, baseContentWidth - 120));
   const chartMaxValue = maxVolume <= 0 ? 1 : Math.ceil(maxVolume * 1.18);
   const hasData = rows.some((row) => row.production > 0);
   const valueLabelWidth = Math.round(Math.max(52, Math.min(74, barWidth + 28)));
@@ -1372,41 +1409,41 @@ function DailyProductionCard({
       </View>
 
       <View style={styles.productionChart}>
-        <BarChart
-          key={dailyChartKey}
-          data={chartData}
-          width={chartViewportWidth}
-          height={chartHeight}
-          barWidth={barWidth}
-          spacing={spacing}
-          initialSpacing={18}
-          endSpacing={18}
-          maxValue={chartMaxValue}
-          noOfSections={5}
-          showGradient
-          roundedBottom={false}
-          barBorderTopLeftRadius={5}
-          barBorderTopRightRadius={5}
-          barBorderBottomLeftRadius={0}
-          barBorderBottomRightRadius={0}
-          isAnimated
-          animationDuration={800}
-          showValuesAsTopLabel={false}
-          xAxisColor={palette.lineStrong}
-          yAxisColor={palette.lineStrong}
-          rulesColor={palette.line}
-          rulesThickness={1}
-          yAxisTextStyle={styles.chartAxisLabel}
-          xAxisLabelTextStyle={styles.chartMonthLabel}
-          yAxisLabelWidth={56}
-          xAxisTextNumberOfLines={1}
-          labelsExtraHeight={28}
-          formatYLabel={(value) => formatNumber(value, 0)}
-          disableScroll={false}
-          nestedScrollEnabled
-          showScrollIndicator
-          indicatorColor={isDark ? 'white' : 'black'}
-        />
+        <ChartScrollFrame styles={styles}>
+          <BarChart
+            key={dailyChartKey}
+            data={chartData}
+            width={chartContentWidth}
+            height={chartHeight}
+            barWidth={barWidth}
+            spacing={spacing}
+            initialSpacing={18}
+            endSpacing={18}
+            maxValue={chartMaxValue}
+            noOfSections={5}
+            showGradient
+            roundedBottom={false}
+            barBorderTopLeftRadius={5}
+            barBorderTopRightRadius={5}
+            barBorderBottomLeftRadius={0}
+            barBorderBottomRightRadius={0}
+            isAnimated
+            animationDuration={800}
+            showValuesAsTopLabel={false}
+            xAxisColor={palette.lineStrong}
+            yAxisColor={palette.lineStrong}
+            rulesColor={palette.line}
+            rulesThickness={1}
+            yAxisTextStyle={styles.chartAxisLabel}
+            xAxisLabelTextStyle={styles.chartMonthLabel}
+            yAxisLabelWidth={56}
+            xAxisTextNumberOfLines={1}
+            labelsExtraHeight={28}
+            formatYLabel={(value) => formatNumber(value, 0)}
+            disableScroll
+            nestedScrollEnabled
+          />
+        </ChartScrollFrame>
         {isLoadingMonth ? (
           <View style={styles.chartLoadingOverlay} pointerEvents="none">
             <ActivityIndicator size="small" color={palette.teal600} />
@@ -1727,6 +1764,7 @@ export default function OfficeGraphsScreen({ navigation }) {
       eyebrow="Live Supabase Workspace"
       title="Graphs"
       showMenuButton
+      showHeaderThemeToggle
       onAccountEditPress={navigation.openAccountEdit}
       stickyHeader
       statusChips={headerStatusChips}
@@ -3003,15 +3041,20 @@ function createStyles(palette, isDark, responsiveMetrics) {
       position: 'relative',
       zIndex: 0,
       elevation: 0,
-      alignItems: 'center',
       minHeight: CHART_CONTAINER_MIN_HEIGHT,
       paddingTop: 20,
-      paddingRight: 10,
       paddingBottom: 6,
       borderWidth: 1,
       borderColor: palette.line,
       backgroundColor: isDark ? '#0B1723' : '#FBFDFF',
       borderRadius: 8,
+    },
+    chartHorizontalScroll: {
+      width: '100%',
+    },
+    chartHorizontalContent: {
+      minWidth: '100%',
+      paddingRight: 16,
     },
     chartLoadingOverlay: {
       position: 'absolute',

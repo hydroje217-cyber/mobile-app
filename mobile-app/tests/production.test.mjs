@@ -392,6 +392,34 @@ try {
   assert.equal(monthlyPowerWithSummaries.rows[0].deepwellPower, 165);
   assert.equal(monthlyPowerWithSummaries.totalPower, 315);
 
+  const monthlyPowerWithSummaryGap = buildMonthlyPowerConsumption(
+    {
+      chlorinationReadings: [
+        { slot_datetime: '2026-01-31T22:30:00', chlorination_power_kwh: 100 },
+        { slot_datetime: '2026-02-01T06:30:00', chlorination_power_kwh: 110 },
+        { slot_datetime: '2026-02-01T14:30:00', chlorination_power_kwh: 125 },
+        { slot_datetime: '2026-02-01T22:30:00', chlorination_power_kwh: 140 },
+        { slot_datetime: '2026-02-02T06:30:00', chlorination_power_kwh: 170 },
+        { slot_datetime: '2026-02-02T14:30:00', chlorination_power_kwh: 210 },
+        { slot_datetime: '2026-02-02T22:30:00', chlorination_power_kwh: 260 },
+      ],
+      deepwellReadings: [],
+    },
+    {
+      now: new Date('2026-02-28T12:00:00.000Z'),
+      monthCount: 1,
+      dailySummaries: [
+        {
+          summary_date: '2026-02-01',
+          power_kwh: 70,
+          site: { type: 'CHLORINATION' },
+        },
+      ],
+    }
+  );
+
+  assert.equal(monthlyPowerWithSummaryGap.rows[0].chlorinationPower, 190);
+
   const dailyPowerWithSummaries = buildDailyPowerConsumption(
     {
       chlorinationReadings: [],

@@ -828,6 +828,7 @@ const NOTIFICATION_FILTERS = [
 ];
 const ACCOUNT_MANAGER_ROLES = ['admin', 'general_manager'];
 const OFFICE_MONITOR_ROLES = ['admin', 'supervisor', 'manager', 'general_manager'];
+const OPERATOR_ROLES = ['operator', 'test_operator'];
 
 function formatRoleLabel(role) {
   return String(role || 'operator').replace(/_/g, ' ').toUpperCase();
@@ -1216,6 +1217,7 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
   const isWide = width >= 980;
   const isAdmin = profile?.role === 'admin';
   const canManageAccounts = ACCOUNT_MANAGER_ROLES.includes(profile?.role);
+  const isOperatorView = OPERATOR_ROLES.includes(profile?.role);
   const requestedSection = initialSection || (profile?.role === 'general_manager' ? 'readings' : canManageAccounts ? 'overview' : 'readings');
   const roleChoices = ['operator', 'test_operator', 'supervisor', 'manager', 'general_manager', 'admin'];
   const [activeSection, setActiveSection] = useState(requestedSection);
@@ -1681,6 +1683,32 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
       iconColor: palette.teal500,
     },
   ];
+  const shellHeaderCopy = useMemo(() => {
+    if (activeSection === 'readings') {
+      return {
+        eyebrow: isOperatorView ? 'Operator View' : 'Live Supabase Workspace',
+        title: '30-minute checkpoints',
+        subtitle: isOperatorView
+          ? 'Review site reading status by slot.'
+          : 'Confirm site readings by time slot.',
+      };
+    }
+
+    if (activeSection === 'notifications') {
+      return {
+        eyebrow: 'Live Supabase Workspace',
+        title: 'Notification',
+        subtitle: 'Monitor alerts and reading activity.',
+      };
+    }
+
+    return {
+      eyebrow: 'Live Supabase Workspace',
+      title: 'Dashboard',
+      subtitle: '',
+    };
+  }, [activeSection, isOperatorView]);
+
   function renderOverview() {
     if (!canManageAccounts) {
       return renderSlotTimeline();
@@ -2536,9 +2564,11 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
 
   return (
     <ScreenShell
-      eyebrow="Live Supabase Workspace"
-      title={activeSection === 'notifications' ? 'Notification' : 'Dashboard'}
+      eyebrow={shellHeaderCopy.eyebrow}
+      title={shellHeaderCopy.title}
+      subtitle={shellHeaderCopy.subtitle}
       showMenuButton
+      showHeaderThemeToggle
       onAccountEditPress={navigation.openAccountEdit}
       stickyHeader
       statusChips={headerStatusChips}
