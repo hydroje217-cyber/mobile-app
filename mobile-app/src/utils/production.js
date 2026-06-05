@@ -46,6 +46,38 @@ function localDayKeyFromReading(item) {
   return Number.isNaN(parsed.getTime()) ? String(value || '').slice(0, 10) : createDayKey(parsed);
 }
 
+function dateFromDayKey(dayKey) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dayKey || ''))) {
+    return null;
+  }
+
+  const [year, month, day] = String(dayKey || '').split('-').map(Number);
+
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    return null;
+  }
+
+  const date = new Date(year, month - 1, day);
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day ? date : null;
+}
+
+function yearFromDayKey(dayKey) {
+  const date = dateFromDayKey(dayKey);
+  return date ? date.getFullYear() : null;
+}
+
+function latestReadingDateForYear(readings, year, fallbackDate) {
+  return readings.reduce((latestDate, reading) => {
+    const readingDate = dateFromDayKey(dayKeyFromReading(reading));
+
+    if (!readingDate || readingDate.getFullYear() !== year) {
+      return latestDate;
+    }
+
+    return !latestDate || readingDate > latestDate ? readingDate : latestDate;
+  }, fallbackDate);
+}
+
 export function getReadingTime(item) {
   const parsed = new Date(item?.slot_datetime || item?.reading_datetime || item?.created_at || '');
   return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
@@ -593,6 +625,12 @@ function summaryMapOrLiveMap({ summaryMap, liveMap }) {
   return summaryMap.size ? summaryMap : liveMap;
 }
 
+function yearsFromSummaries(summaries) {
+  return summaries
+    .map((summary) => yearFromDayKey(dayKeyFromSummary(summary)))
+    .filter((year) => year !== null);
+}
+
 export function aggregateDailyRows(items, fieldConfigs, options = {}) {
   const { visibleFromDate, visibleToDate } = options;
   const grouped = groupReadingsByDay(items);
@@ -762,6 +800,32 @@ export function buildMonthlyProduction(readings, options = {}) {
   };
 }
 
+export function buildMonthlyProductionYears(readings, options = {}) {
+  const { now = new Date(), dailySummaries = [] } = options;
+  const years = new Set([now.getFullYear()]);
+
+  readings.forEach((reading) => {
+    const year = yearFromDayKey(dayKeyFromReading(reading));
+
+    if (year !== null) {
+      years.add(year);
+    }
+  });
+  yearsFromSummaries(filterSummariesBySiteType(dailySummaries, 'CHLORINATION')).forEach((year) => years.add(year));
+
+  return Array.from(years)
+    .sort((a, b) => b - a)
+    .map((year) => {
+      const fallbackDate = year === now.getFullYear() ? now : new Date(year, 11, 31);
+      const latestDate = latestReadingDateForYear(readings, year, fallbackDate);
+
+      return {
+        year,
+        ...buildMonthlyProduction(readings, { now: latestDate, monthCount: latestDate.getMonth() + 1, dailySummaries }),
+      };
+    });
+}
+
 export function buildDailyProduction(readings, options = {}) {
   const { now = new Date(), dailySummaries = [] } = options;
   const firstVisibleDay = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -795,6 +859,72 @@ export function buildDailyProduction(readings, options = {}) {
     totalProduction: rows.reduce((sum, row) => sum + row.production, 0),
     rows,
   };
+}
+
+export function buildDailyProductionMonths(readings, options = {}) {
+  const { now = new Date(), year = now.getFullYear(), dailySummaries = [] } = options;
+  const fallbackDate = year === now.getFullYear() ? now : new Date(year, 11, 31);
+  const latestDate = latestReadingDateForYear(readings, year, fallbackDate);
+  const latestMonthIndex = latestDate.getMonth();
+
+  return Array.from({ length: latestMonthIndex + 1 }, (_item, monthIndex) => {
+    const monthDate = new Date(year, monthIndex, 1);
+    const lastDay = new Date(year, monthIndex + 1, 0);
+    const lastVisibleDay = monthIndex === latestMonthIndex ? latestDate : lastDay;
+    const visibleFromDate = createDayKey(monthDate);
+    const visibleToDate = createDayKey(lastVisibleDay);
+    const productionByDate = mergeDailyMaps({
+      liveMap: buildDailyAggregateMap(buildDailyTotalizerProductionRows(readings, { visibleFromDate, visibleToDate }), 'totalizer'),
+      summaryMap: buildDailySummaryMap(filterSummariesBySiteType(dailySummaries, 'CHLORINATION'), 'production_m3', {
+        visibleFromDate,
+        visibleToDate,
+      }),
+    });
+    const rows = [];
+
+    for (let date = new Date(monthDate); date <= lastVisibleDay; date.setDate(date.getDate() + 1)) {
+      const key = createDayKey(date);
+      const production = parseProductionNumber(productionByDate.get(key)) ?? 0;
+
+      rows.push({
+        key,
+        date: key,
+        label: `${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}`,
+        production,
+      });
+    }
+
+    rows.sort((a, b) => b.key.localeCompare(a.key));
+
+    return {
+      key: createMonthKey(monthDate),
+      monthLabel: createFullMonthLabel(monthDate),
+      shortLabel: createMonthLabel(monthDate),
+      totalProduction: rows.reduce((sum, row) => sum + row.production, 0),
+      rows,
+    };
+  });
+}
+
+export function buildDailyProductionYears(readings, options = {}) {
+  const { now = new Date(), dailySummaries = [] } = options;
+  const years = new Set([now.getFullYear()]);
+
+  readings.forEach((reading) => {
+    const year = yearFromDayKey(dayKeyFromReading(reading));
+
+    if (year !== null) {
+      years.add(year);
+    }
+  });
+  yearsFromSummaries(filterSummariesBySiteType(dailySummaries, 'CHLORINATION')).forEach((year) => years.add(year));
+
+  return Array.from(years)
+    .sort((a, b) => b - a)
+    .map((year) => ({
+      year,
+      months: buildDailyProductionMonths(readings, { now, year, dailySummaries }),
+    }));
 }
 
 export function buildDailyPowerConsumption({ chlorinationReadings = [], deepwellReadings = [] } = {}, options = {}) {
@@ -960,6 +1090,36 @@ export function buildMonthlyPowerConsumption({ chlorinationReadings = [], deepwe
   };
 }
 
+export function buildMonthlyPowerConsumptionYears({ chlorinationReadings = [], deepwellReadings = [] } = {}, options = {}) {
+  const { now = new Date(), dailySummaries = [] } = options;
+  const years = new Set([now.getFullYear()]);
+  const readings = [...chlorinationReadings, ...deepwellReadings];
+
+  readings.forEach((reading) => {
+    const year = yearFromDayKey(dayKeyFromReading(reading));
+
+    if (year !== null) {
+      years.add(year);
+    }
+  });
+  yearsFromSummaries(dailySummaries).forEach((year) => years.add(year));
+
+  return Array.from(years)
+    .sort((a, b) => b - a)
+    .map((year) => {
+      const fallbackDate = year === now.getFullYear() ? now : new Date(year, 11, 31);
+      const latestDate = latestReadingDateForYear(readings, year, fallbackDate);
+
+      return {
+        year,
+        ...buildMonthlyPowerConsumption(
+          { chlorinationReadings, deepwellReadings },
+          { now: latestDate, monthCount: latestDate.getMonth() + 1, dailySummaries }
+        ),
+      };
+    });
+}
+
 export function buildMonthlyChemicalUsage(chlorinationReadings = [], options = {}) {
   const { now = new Date(), monthCount = DEFAULT_MONTHLY_PRODUCTION_MONTH_COUNT, dailySummaries = [] } = options;
   const { firstVisibleMonth, rowsByMonth } = createMonthlyRows({ now, monthCount });
@@ -1004,4 +1164,30 @@ export function buildMonthlyChemicalUsage(chlorinationReadings = [], options = {
     totalPeroxide: rows.reduce((sum, row) => sum + row.peroxideUsage, 0),
     rows,
   };
+}
+
+export function buildMonthlyChemicalUsageYears(chlorinationReadings = [], options = {}) {
+  const { now = new Date(), dailySummaries = [] } = options;
+  const years = new Set([now.getFullYear()]);
+
+  chlorinationReadings.forEach((reading) => {
+    const year = yearFromDayKey(dayKeyFromReading(reading));
+
+    if (year !== null) {
+      years.add(year);
+    }
+  });
+  yearsFromSummaries(filterSummariesBySiteType(dailySummaries, 'CHLORINATION')).forEach((year) => years.add(year));
+
+  return Array.from(years)
+    .sort((a, b) => b - a)
+    .map((year) => {
+      const fallbackDate = year === now.getFullYear() ? now : new Date(year, 11, 31);
+      const latestDate = latestReadingDateForYear(chlorinationReadings, year, fallbackDate);
+
+      return {
+        year,
+        ...buildMonthlyChemicalUsage(chlorinationReadings, { now: latestDate, monthCount: latestDate.getMonth() + 1, dailySummaries }),
+      };
+    });
 }

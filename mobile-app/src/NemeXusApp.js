@@ -11,6 +11,7 @@ import AuthScreen from './screens/AuthScreen';
 import LoadingScreen from './screens/LoadingScreen';
 import OfficeDashboardScreen from './screens/OfficeDashboardScreen';
 import OfficeGraphsScreen from './screens/OfficeGraphsScreen';
+import SummaryReportScreen from './screens/SummaryReportScreen';
 import OfficeBottomNav from './components/OfficeBottomNav';
 import PendingApprovalScreen from './screens/PendingApprovalScreen';
 import SetupRequiredScreen from './screens/SetupRequiredScreen';
@@ -58,7 +59,7 @@ function getBackRoute(route) {
     };
   }
 
-  if (route.name === 'office-graphs') {
+  if (route.name === 'office-graphs' || route.name === 'summary-report') {
     return {
       name: 'office-dashboard',
       params: {},
@@ -233,6 +234,8 @@ export default function NemeXusApp() {
     screen = <OfficeDashboardScreen navigation={navigation} initialSection={route.params?.section} />;
   } else if (routeName === 'office-graphs' && isPrivileged) {
     screen = <OfficeGraphsScreen navigation={navigation} />;
+  } else if (routeName === 'summary-report' && isPrivileged) {
+    screen = <SummaryReportScreen navigation={navigation} />;
   } else if (routeName === 'site-selection') {
     screen = (
       <SiteSelectionScreen
@@ -266,6 +269,7 @@ export default function NemeXusApp() {
     isPrivileged &&
     (routeName === 'office-dashboard' ||
       routeName === 'office-graphs' ||
+      routeName === 'summary-report' ||
       (routeName === 'reading-history' && route.params?.source === 'office-dashboard'));
   const showOperatorBottomNav =
     isOperator &&
@@ -276,6 +280,8 @@ export default function NemeXusApp() {
     canManageAccounts
       ? routeName === 'office-graphs'
           ? 'graphs'
+        : routeName === 'summary-report'
+          ? 'summary'
         : routeName === 'reading-history'
           ? 'history'
           : route.params?.section === 'roles'
@@ -287,6 +293,8 @@ export default function NemeXusApp() {
               : 'dashboard'
       : routeName === 'office-graphs'
         ? 'graphs'
+        : routeName === 'summary-report'
+          ? 'summary'
         : routeName === 'reading-history'
           ? 'history'
           : route.params?.section === 'notifications'
