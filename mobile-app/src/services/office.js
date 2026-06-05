@@ -1,11 +1,14 @@
 import { supabase } from '../lib/supabase';
 import {
   buildDailyProduction,
+  buildDailyProductionYears,
   buildMonthlyChemicalUsage,
+  buildMonthlyChemicalUsageYears,
   buildMonthlyProduction,
+  buildMonthlyProductionYears,
   buildMonthlyPowerConsumption,
+  buildMonthlyPowerConsumptionYears,
   createDayKey,
-  startOfMonthlyProductionSourceIso,
 } from '../utils/production';
 
 const DAILY_SUMMARY_SELECT =
@@ -394,6 +397,14 @@ function getYearAnalyticsRange(year) {
   };
 }
 
+function startOfSummaryReportAnalyticsIso({ now = new Date(), yearCount = 2 } = {}) {
+  return new Date(now.getFullYear() - yearCount + 1, 0, 0).toISOString();
+}
+
+function startOfSummaryReportAnalyticsDate({ now = new Date(), yearCount = 2 } = {}) {
+  return createDayKey(new Date(now.getFullYear() - yearCount + 1, 0, 1));
+}
+
 export async function getMonthlyAnalyticsForYear({ year }) {
   requireSupabase();
 
@@ -489,6 +500,8 @@ export async function getOfficeDashboardSnapshot({ limit = 12, includeLoginLogs 
   const todayIso = startOfTodayIso();
   const slotQueryStartIso = startOfPreviousNightIso(checkpointDate);
   const tomorrowIso = startOfTomorrowIso(checkpointDate);
+  const summaryReportAnalyticsIso = startOfSummaryReportAnalyticsIso();
+  const summaryReportAnalyticsDate = startOfSummaryReportAnalyticsDate();
   const [
     pendingApprovalsResult,
     totalOperatorsResult,
@@ -551,17 +564,17 @@ export async function getOfficeDashboardSnapshot({ limit = 12, includeLoginLogs 
     supabase
       .from('chlorination_readings')
       .select('id, site_id, status, created_at, reading_datetime, slot_datetime, totalizer, chlorine_consumed, peroxide_consumption, chlorination_power_kwh')
-      .gte('reading_datetime', startOfMonthlyProductionSourceIso())
+      .gte('reading_datetime', summaryReportAnalyticsIso)
       .order('reading_datetime', { ascending: true }),
     supabase
       .from('deepwell_readings')
       .select('id, site_id, status, created_at, reading_datetime, slot_datetime, power_kwh_shift')
-      .gte('reading_datetime', startOfMonthlyProductionSourceIso())
+      .gte('reading_datetime', summaryReportAnalyticsIso)
       .order('reading_datetime', { ascending: true }),
     supabase
       .from('daily_site_summaries')
       .select(DAILY_SUMMARY_SELECT)
-      .gte('summary_date', startOfMonthlyProductionSourceIso().slice(0, 10))
+      .gte('summary_date', summaryReportAnalyticsDate)
       .order('summary_date', { ascending: true }),
   ]);
 
@@ -595,6 +608,9 @@ export async function getOfficeDashboardSnapshot({ limit = 12, includeLoginLogs 
     ...(todayChlorinationSlotsResult.data ?? []).map((row) => normalizeOfficeReading(row, 'CHLORINATION')),
     ...(todayDeepwellSlotsResult.data ?? []).map((row) => normalizeOfficeReading(row, 'DEEPWELL')),
   ];
+  const monthlyChlorinationReadings = monthlyChlorinationReadingsResult.data ?? [];
+  const monthlyDeepwellReadings = monthlyDeepwellReadingsResult.data ?? [];
+  const dailySummaries = dailySummariesResult.data ?? [];
 
   return {
     stats: {
@@ -611,20 +627,35 @@ export async function getOfficeDashboardSnapshot({ limit = 12, includeLoginLogs 
     siteOperationEvents: siteOperationEventsResult.data ?? [],
     profiles: profilesResult.data ?? [],
     loginLogs: (loginLogsResult.data ?? []).map(normalizeLoginLog),
-    monthlyProduction: buildMonthlyProduction(monthlyChlorinationReadingsResult.data ?? [], {
-      dailySummaries: dailySummariesResult.data ?? [],
+    monthlyProduction: buildMonthlyProduction(monthlyChlorinationReadings, {
+      dailySummaries,
     }),
-    dailyProduction: buildDailyProduction(monthlyChlorinationReadingsResult.data ?? [], {
-      dailySummaries: dailySummariesResult.data ?? [],
+    monthlyProductionYears: buildMonthlyProductionYears(monthlyChlorinationReadings, {
+      dailySummaries,
     }),
-    monthlyChemicalUsage: buildMonthlyChemicalUsage(monthlyChlorinationReadingsResult.data ?? [], {
-      dailySummaries: dailySummariesResult.data ?? [],
+    dailyProduction: buildDailyProduction(monthlyChlorinationReadings, {
+      dailySummaries,
+    }),
+    dailyProductionYears: buildDailyProductionYears(monthlyChlorinationReadings, {
+      dailySummaries,
+    }),
+    monthlyChemicalUsage: buildMonthlyChemicalUsage(monthlyChlorinationReadings, {
+      dailySummaries,
+    }),
+    monthlyChemicalUsageYears: buildMonthlyChemicalUsageYears(monthlyChlorinationReadings, {
+      dailySummaries,
     }),
     monthlyPowerConsumption: buildMonthlyPowerConsumption({
-      chlorinationReadings: monthlyChlorinationReadingsResult.data ?? [],
-      deepwellReadings: monthlyDeepwellReadingsResult.data ?? [],
+      chlorinationReadings: monthlyChlorinationReadings,
+      deepwellReadings: monthlyDeepwellReadings,
     }, {
-      dailySummaries: dailySummariesResult.data ?? [],
+      dailySummaries,
+    }),
+    monthlyPowerConsumptionYears: buildMonthlyPowerConsumptionYears({
+      chlorinationReadings: monthlyChlorinationReadings,
+      deepwellReadings: monthlyDeepwellReadings,
+    }, {
+      dailySummaries,
     }),
   };
 }

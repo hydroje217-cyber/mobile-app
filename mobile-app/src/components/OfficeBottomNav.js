@@ -23,6 +23,13 @@ const DEFAULT_ITEMS = [
     params: {},
   },
   {
+    key: 'summary',
+    label: 'Summary',
+    iconName: 'document-text-outline',
+    routeName: 'summary-report',
+    params: {},
+  },
+  {
     key: 'history',
     label: 'History',
     iconName: 'reader-outline',
@@ -52,6 +59,13 @@ const ADMIN_ITEMS = [
     iconName: 'reader-outline',
     routeName: 'office-dashboard',
     params: { section: 'readings' },
+  },
+  {
+    key: 'summary',
+    label: 'Summary',
+    iconName: 'document-text-outline',
+    routeName: 'summary-report',
+    params: {},
   },
   {
     key: 'approvals',
