@@ -662,6 +662,7 @@ export default function SiteSelectionScreen({ navigation, onSelectedSiteChange, 
       title="Select site"
       subtitle={`Signed in as ${profile?.full_name || profile?.email || 'User'} (${profile?.role || 'operator'})`}
       showMenuButton
+      showHeaderThemeToggle
       onAccountEditPress={navigation.openAccountEdit}
       onTutorialPress={navigation.openTutorial}
       scrollRef={tutorialScrollRef}

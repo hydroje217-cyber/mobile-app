@@ -1158,7 +1158,34 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     : isOperatorAllSitesView
       ? 'All sites'
       : site?.name || 'Selected site';
-  const historySubtitle = `${historyScopeLabel} · ${profile?.full_name || profile?.email || 'Unknown operator'} · Updated ${formatHeaderUpdatedTime(lastUpdatedAt)}`;
+  const historySubtitle = `${historyScopeLabel} - ${profile?.full_name || profile?.email || 'Unknown operator'}`;
+  const historyHeaderCopy = useMemo(
+    () => ({
+      eyebrow: isOfficeView ? 'Office View' : 'Operator View',
+      title: 'Reading history',
+      subtitle: historySubtitle,
+    }),
+    [historySubtitle, isOfficeView]
+  );
+  const historyStatusChips = useMemo(
+    () => [
+      {
+        key: 'connected',
+        label: messageTone === 'error' ? 'Connection issue' : 'Connected',
+        tone: messageTone === 'error' ? 'warning' : 'success',
+        iconName: messageTone === 'error' ? 'alert-circle-outline' : 'checkmark-circle-outline',
+        iconColor: messageTone === 'error' ? palette.amber500 : palette.successText,
+      },
+      {
+        key: 'updated',
+        label: `Updated ${formatHeaderUpdatedTime(lastUpdatedAt)}`,
+        tone: 'neutral',
+        iconName: 'ellipse',
+        iconColor: palette.teal500,
+      },
+    ],
+    [lastUpdatedAt, messageTone, palette.amber500, palette.successText, palette.teal500]
+  );
 
   const chlorinationColumns = [
     { key: 'date', label: 'Date', width: 110, render: (row) => formatShortDateTime(row.slot_datetime).slice(0, 10) },
@@ -1654,13 +1681,16 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
 
   return (
     <ScreenShell
-      title="Reading History"
-      subtitle={historySubtitle}
+      eyebrow={historyHeaderCopy.eyebrow}
+      title={historyHeaderCopy.title}
+      subtitle={historyHeaderCopy.subtitle}
+      statusChips={historyStatusChips}
       headerActionIcon="arrow-back-outline"
       headerActionLabel={isOfficeView ? 'Back to dashboard' : 'Back to site selection'}
       headerActionBare
       onHeaderActionPress={navigation.goBack}
       showMenuButton
+      showHeaderThemeToggle
       onAccountEditPress={navigation.openAccountEdit}
       onTutorialPress={navigation.openTutorial}
       refreshing={loading}

@@ -927,9 +927,10 @@ export function buildMonthlyPowerConsumption({ chlorinationReadings = [], deepwe
     'power_kwh',
     summaryOptions
   );
-  const chlorinationPowerByDate = summaryMapOrLiveMap({
+  const chlorinationPowerByDate = mergeDailyMaps({
     summaryMap: chlorinationSummaryPowerByDate,
     liveMap: chlorinationLivePowerByDate,
+    preferSummary: true,
   });
   const deepwellPowerByDate = mergeDailyMaps({
     summaryMap: deepwellSummaryPowerByDate,

@@ -25,6 +25,7 @@ export default function ScreenShell({
   onAccountEditPress,
   onTutorialPress,
   hideThemeToggle = false,
+  showHeaderThemeToggle = false,
   children,
   scroll = true,
   keyboardAware = false,
@@ -130,22 +131,31 @@ export default function ScreenShell({
           </View>
           {!statusChipsInline ? renderStatusChips(styles.statusChipRowHeader) : null}
           {showMenuButton ? (
-            <View style={styles.accountControlWrap}>
-              <Pressable
-                onPress={(event) => {
-                  event.stopPropagation?.();
-                  setAccountOpen((current) => !current);
-                }}
-                accessibilityLabel={accountOpen ? 'Close account details' : 'Open account details'}
-                style={({ pressed }) => [styles.accountIconButton, accountOpen && styles.accountIconButtonOpen, pressed && styles.menuButtonPressed]}
-              >
-                <Ionicons name="person-circle-outline" size={20} color={palette.cyan300} />
-              </Pressable>
-              {accountOpen ? (
-                <View
-                  style={styles.accountDropdown}
-                  onStartShouldSetResponder={() => true}
+            <View style={styles.headerControlRow}>
+              {showHeaderThemeToggle && !hideThemeToggle ? (
+                <PressableThemeToggle
+                  isDark={isDark}
+                  palette={palette}
+                  onPress={toggleTheme}
+                  styles={styles}
+                />
+              ) : null}
+              <View style={styles.accountControlWrap}>
+                <Pressable
+                  onPress={(event) => {
+                    event.stopPropagation?.();
+                    setAccountOpen((current) => !current);
+                  }}
+                  accessibilityLabel={accountOpen ? 'Close account details' : 'Open account details'}
+                  style={({ pressed }) => [styles.accountIconButton, accountOpen && styles.accountIconButtonOpen, pressed && styles.menuButtonPressed]}
                 >
+                  <Ionicons name="person-circle-outline" size={20} color={palette.cyan300} />
+                </Pressable>
+                {accountOpen ? (
+                  <View
+                    style={styles.accountDropdown}
+                    onStartShouldSetResponder={() => true}
+                  >
                   <View style={styles.accountMenuHeader}>
                     <Text style={styles.accountEyebrow}>User details</Text>
                   </View>
@@ -162,7 +172,7 @@ export default function ScreenShell({
                     </View>
                   </View>
                   <View style={styles.accountMenuDivider} />
-                  {!hideThemeToggle ? (
+                  {!hideThemeToggle && !showHeaderThemeToggle ? (
                     <PressableThemeToggle
                       isDark={isDark}
                       palette={palette}
@@ -199,8 +209,9 @@ export default function ScreenShell({
                     <Ionicons name="log-out-outline" size={15} color={isDark ? '#F7CA72' : '#9A6700'} />
                     <Text style={[styles.accountActionText, styles.accountSignOutText]}>Sign out</Text>
                   </Pressable>
-                </View>
-              ) : null}
+                  </View>
+                ) : null}
+              </View>
             </View>
           ) : !hideThemeToggle ? (
             <PressableThemeToggle
@@ -538,6 +549,12 @@ function createStyles(palette, isDark, metrics) {
     statusChipRowInline: {
       flexShrink: 0,
       gap: 3,
+    },
+    headerControlRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      flexShrink: 0,
     },
     accountControlWrap: {
       position: 'relative',
