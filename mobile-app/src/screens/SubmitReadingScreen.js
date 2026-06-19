@@ -16,7 +16,13 @@ import {
   syncOfflineReadings,
 } from '../services/offlineReadings';
 import { clearReadingDraft, loadReadingDraft, saveReadingDraft } from '../services/readingDrafts';
-import { createReading, getLatestReadingForSite, getReadingForSlot, updateReading } from '../services/readings';
+import {
+  createReading,
+  getLatestNonZeroReadingValue,
+  getLatestReadingForSite,
+  getReadingForSlot,
+  updateReading,
+} from '../services/readings';
 import { createSiteOperationEvent, getLatestDeepwellOperationEvent } from '../services/siteOperations';
 import {
   buildGpsPayload,
@@ -107,6 +113,11 @@ function readingSlotText(reading) {
 function valueOrDash(value) {
   return value === null || value === undefined || value === '' ? '-' : String(value);
 }
+
+const SHUTDOWN_ZERO_FALLBACK_FIELDS = {
+  CHLORINATION: ['totalizer', 'chlorination_power_kwh'],
+  DEEPWELL: ['power_kwh_shift'],
+};
 
 const initialChlorinationState = {
   totalizer: '',
@@ -1185,6 +1196,40 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
     setPendingSubmission(submission);
   }
 
+  async function applyShutdownZeroFallback(payload) {
+    if (!isOperationLockActive || !payload?.site_id || !payload?.site_type) {
+      return payload;
+    }
+
+    const fields = SHUTDOWN_ZERO_FALLBACK_FIELDS[payload.site_type] || [];
+    const zeroFields = fields.filter((field) => payload[field] === 0);
+
+    if (!zeroFields.length) {
+      return payload;
+    }
+
+    const replacements = await Promise.all(
+      zeroFields.map(async (field) => [
+        field,
+        await getLatestNonZeroReadingValue({
+          siteId: payload.site_id,
+          siteType: payload.site_type,
+          field,
+          beforeSlotIso: payload.slot_datetime,
+        }),
+      ])
+    );
+    const nextPayload = { ...payload };
+
+    replacements.forEach(([field, value]) => {
+      if (value !== null) {
+        nextPayload[field] = value;
+      }
+    });
+
+    return nextPayload;
+  }
+
   async function handleConfirmSubmit() {
     if (!pendingSubmission || submitting) {
       return;
@@ -1218,6 +1263,8 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
         return;
       }
 
+      finalPayload = await applyShutdownZeroFallback(payload);
+
       if (GEOFENCING_ENABLED && siteHasGeofence) {
         setLocationChecking(true);
         const location = await requestCurrentLocation();
@@ -1244,7 +1291,7 @@ export default function SubmitReadingScreen({ navigation, site, editingReading, 
         }
 
         finalPayload = {
-          ...payload,
+          ...finalPayload,
           ...buildGpsPayload(site, location, nextGeofenceStatus),
         };
       }

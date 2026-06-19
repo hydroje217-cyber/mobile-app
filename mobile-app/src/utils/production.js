@@ -1,4 +1,5 @@
 const DEFAULT_MONTHLY_PRODUCTION_MONTH_COUNT = 10;
+const ZERO_FALLBACK_FIELDS = new Set(['totalizer', 'chlorination_power_kwh', 'power_kwh_shift']);
 
 export function createDayKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -33,6 +34,41 @@ export function parseProductionNumber(value) {
 
   const parsed = typeof value === 'string' ? Number(value.replace(/,/g, '')) : Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function buildComputationValueResolver(items, field) {
+  if (!ZERO_FALLBACK_FIELDS.has(field)) {
+    return (item) => parseProductionNumber(item?.[field]);
+  }
+
+  const valueByItem = new Map();
+
+  groupRowsByReadingGroup(items).forEach((groupRows) => {
+    let previousNonZeroValue = null;
+
+    [...groupRows]
+      .map((item, index) => ({
+        item,
+        index,
+        timestamp: getReadingTime(item),
+        value: parseProductionNumber(item?.[field]),
+      }))
+      .sort((a, b) => a.timestamp - b.timestamp || a.index - b.index)
+      .forEach(({ item, value }) => {
+        if (value === 0 && previousNonZeroValue !== null) {
+          valueByItem.set(item, previousNonZeroValue);
+          return;
+        }
+
+        valueByItem.set(item, value);
+
+        if (value !== null && value !== 0) {
+          previousNonZeroValue = value;
+        }
+      });
+  });
+
+  return (item) => (valueByItem.has(item) ? valueByItem.get(item) : parseProductionNumber(item?.[field]));
 }
 
 export function dayKeyFromReading(item) {
@@ -285,9 +321,10 @@ function addShiftYield(total, count, currentValue, previousValue) {
 
 function buildDailyShiftYieldMap(items, field) {
   const latestByDateAndGroup = new Map();
+  const computationValueForItem = buildComputationValueResolver(items, field);
 
   items.forEach((item) => {
-    const value = parseProductionNumber(item[field]);
+    const value = computationValueForItem(item);
     const date = shiftBusinessDateKey(item);
     const shiftKey = shiftKeyFromReadingTime(item);
     const groupKey = readingGroupKey(item);
@@ -358,9 +395,10 @@ function buildDailyShiftYieldMap(items, field) {
 
 function buildDailySlotProductionMap(items, field) {
   const slotValuesByDateAndGroup = new Map();
+  const computationValueForItem = buildComputationValueResolver(items, field);
 
   items.forEach((item) => {
-    const value = parseProductionNumber(item[field]);
+    const value = computationValueForItem(item);
     const date = localDayKeyFromReading(item);
     const slotKey = slotProductionKeyFromReadingTime(item);
     const groupKey = readingGroupKey(item);
@@ -431,9 +469,10 @@ function buildDailySlotProductionMap(items, field) {
 
 export function addShiftYieldToRows(items, field, targetKey) {
   const latestByDateAndGroup = new Map();
+  const computationValueForItem = buildComputationValueResolver(items, field);
 
   items.forEach((item) => {
-    const value = parseProductionNumber(item[field]);
+    const value = computationValueForItem(item);
     const date = shiftBusinessDateKey(item);
     const shiftKey = shiftKeyFromReadingTime(item);
     const groupKey = readingGroupKey(item);
@@ -489,9 +528,10 @@ export function addShiftYieldToRows(items, field, targetKey) {
 
 export function addSlotProductionToRows(items, field, targetKey) {
   const slotValuesByDateAndGroup = new Map();
+  const computationValueForItem = buildComputationValueResolver(items, field);
 
   items.forEach((item) => {
-    const value = parseProductionNumber(item[field]);
+    const value = computationValueForItem(item);
     const date = localDayKeyFromReading(item);
     const slotKey = slotProductionKeyFromReadingTime(item);
     const groupKey = readingGroupKey(item);
