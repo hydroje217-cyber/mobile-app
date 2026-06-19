@@ -142,6 +142,54 @@ try {
       ['2026-02-01T23:30:00', null],
     ]
   );
+
+  const zeroFallbackProductionReadings = [
+    { site_id: 1, slot_datetime: '2026-01-31T23:00:00', totalizer: 1000 },
+    { site_id: 1, slot_datetime: '2026-02-01T07:00:00', totalizer: 1100 },
+    { site_id: 1, slot_datetime: '2026-02-01T15:00:00', totalizer: 0 },
+    { site_id: 1, slot_datetime: '2026-02-01T23:00:00', totalizer: 0 },
+    { site_id: 2, slot_datetime: '2026-01-31T23:00:00', totalizer: 5000 },
+    { site_id: 2, slot_datetime: '2026-02-01T07:00:00', totalizer: 0 },
+    { site_id: 2, slot_datetime: '2026-02-01T15:00:00', totalizer: 5100 },
+    { site_id: 2, slot_datetime: '2026-02-01T23:00:00', totalizer: 5200 },
+  ];
+  const zeroFallbackProductionRows = aggregateDailyRows(
+    zeroFallbackProductionReadings,
+    [
+      { key: 'productionTotal', field: 'totalizer', aggregate: 'slotProductionTotal' },
+      { key: 'productionA', field: 'totalizer', aggregate: 'slotProduction', shift: 'a' },
+      { key: 'productionB', field: 'totalizer', aggregate: 'slotProduction', shift: 'b' },
+      { key: 'productionC', field: 'totalizer', aggregate: 'slotProduction', shift: 'c' },
+    ],
+    {
+      visibleFromDate: '2026-02-01',
+      visibleToDate: '2026-02-01',
+    }
+  );
+
+  assert.deepEqual(
+    zeroFallbackProductionRows.map((row) => [row.date, row.productionA, row.productionB, row.productionC, row.productionTotal]),
+    [['2026-02-01', 100, 100, 100, 300]]
+  );
+  assert.deepEqual(
+    addSlotProductionToRows(zeroFallbackProductionReadings, 'totalizer', 'production_m3').map((row) => [
+      row.site_id,
+      row.slot_datetime,
+      row.production_m3,
+      row.totalizer,
+    ]),
+    [
+      [1, '2026-01-31T23:00:00', null, 1000],
+      [1, '2026-02-01T07:00:00', 100, 1100],
+      [1, '2026-02-01T15:00:00', 0, 0],
+      [1, '2026-02-01T23:00:00', 0, 0],
+      [2, '2026-01-31T23:00:00', null, 5000],
+      [2, '2026-02-01T07:00:00', 0, 0],
+      [2, '2026-02-01T15:00:00', 100, 5100],
+      [2, '2026-02-01T23:00:00', 100, 5200],
+    ]
+  );
+
   assert.deepEqual(
     addSlotProductionToRows(
       [
@@ -205,6 +253,70 @@ try {
       ['b-end', 70],
     ]
   );
+
+  const zeroFallbackPowerRows = aggregateDailyRows(
+    [
+      { site_id: 1, slot_datetime: '2026-01-31T22:30:00', chlorination_power_kwh: 100 },
+      { site_id: 1, slot_datetime: '2026-02-01T06:30:00', chlorination_power_kwh: 130 },
+      { site_id: 1, slot_datetime: '2026-02-01T14:30:00', chlorination_power_kwh: 0 },
+      { site_id: 1, slot_datetime: '2026-02-01T22:30:00', chlorination_power_kwh: 0 },
+      { site_id: 2, slot_datetime: '2026-01-31T22:30:00', chlorination_power_kwh: 500 },
+      { site_id: 2, slot_datetime: '2026-02-01T06:30:00', chlorination_power_kwh: 0 },
+      { site_id: 2, slot_datetime: '2026-02-01T14:30:00', chlorination_power_kwh: 540 },
+      { site_id: 2, slot_datetime: '2026-02-01T22:30:00', chlorination_power_kwh: 580 },
+    ],
+    [
+      { key: 'powerTotal', field: 'chlorination_power_kwh', aggregate: 'shiftYieldTotal' },
+      { key: 'powerC', field: 'chlorination_power_kwh', aggregate: 'shiftYield', shift: 'c' },
+      { key: 'powerA', field: 'chlorination_power_kwh', aggregate: 'shiftYield', shift: 'a' },
+      { key: 'powerB', field: 'chlorination_power_kwh', aggregate: 'shiftYield', shift: 'b' },
+    ],
+    {
+      visibleFromDate: '2026-02-01',
+      visibleToDate: '2026-02-01',
+    }
+  );
+
+  assert.deepEqual(
+    zeroFallbackPowerRows.map((row) => [row.date, row.powerC, row.powerA, row.powerB, row.powerTotal]),
+    [['2026-02-01', 30, 40, 40, 110]]
+  );
+  assert.deepEqual(
+    addShiftYieldToRows(
+      [
+        { id: 'prev-b', site_id: 1, slot_datetime: '2026-01-31T22:30:00', chlorination_power_kwh: 100 },
+        { id: 'c-end', site_id: 1, slot_datetime: '2026-02-01T06:30:00', chlorination_power_kwh: 130 },
+        { id: 'a-end', site_id: 1, slot_datetime: '2026-02-01T14:30:00', chlorination_power_kwh: 0 },
+        { id: 'b-end', site_id: 1, slot_datetime: '2026-02-01T22:30:00', chlorination_power_kwh: 0 },
+      ],
+      'chlorination_power_kwh',
+      'power_yield'
+    ).map((row) => [row.id, row.power_yield, row.chlorination_power_kwh]),
+    [
+      ['prev-b', null, 100],
+      ['c-end', 30, 130],
+      ['a-end', 0, 0],
+      ['b-end', 0, 0],
+    ]
+  );
+
+  const zeroFallbackDeepwellPower = buildMonthlyPowerConsumption(
+    {
+      chlorinationReadings: [],
+      deepwellReadings: [
+        { site_id: 1, slot_datetime: '2026-01-31T22:30:00', power_kwh_shift: 1000 },
+        { site_id: 1, slot_datetime: '2026-02-01T06:30:00', power_kwh_shift: 1040 },
+        { site_id: 1, slot_datetime: '2026-02-01T14:30:00', power_kwh_shift: 0 },
+        { site_id: 1, slot_datetime: '2026-02-01T22:30:00', power_kwh_shift: 1120 },
+      ],
+    },
+    {
+      now: new Date('2026-02-28T12:00:00.000Z'),
+      monthCount: 1,
+    }
+  );
+
+  assert.equal(zeroFallbackDeepwellPower.rows[0].deepwellPower, 120);
 
   const noPreviousRows = buildDailyTotalizerRows(readings.slice(1), {
     visibleFromDate: '2026-02-01',

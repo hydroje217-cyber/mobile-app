@@ -328,6 +328,37 @@ export async function getLatestReadingForSite({ siteId, siteType }) {
   return data ? normalizeReading(data, siteType) : null;
 }
 
+export async function getLatestNonZeroReadingValue({ siteId, siteType, field, beforeSlotIso }) {
+  const meta = READING_META[siteType];
+
+  if (!meta || !siteId || !field) {
+    return null;
+  }
+
+  let query = supabase
+    .from(meta.tableName)
+    .select(`${field}, slot_datetime`)
+    .eq('site_id', siteId)
+    .not(field, 'is', null)
+    .neq(field, 0)
+    .order('slot_datetime', { ascending: false })
+    .limit(1);
+
+  if (beforeSlotIso) {
+    query = query.lt('slot_datetime', beforeSlotIso);
+  }
+
+  const { data, error } = await query.maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  const value = data?.[field];
+  const parsed = typeof value === 'string' ? Number(value.replace(/,/g, '')) : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export async function listReadings({ siteId, siteType, fromDate, toDate, limit, includeAll = false }) {
   if (includeAll && READING_META[siteType]) {
     return fetchAllReadingsForType({ siteType, siteId, fromDate, toDate });
