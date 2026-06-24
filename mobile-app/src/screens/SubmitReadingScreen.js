@@ -84,7 +84,7 @@ const DEEPWELL_BASE_FIELDS = [
 
 const OPERATION_LABELS = {
   normal: 'Normal operation',
-  shutdown: 'Shutdown declared',
+  start: 'Shutdown declared',
   resumed: 'Resume operation',
 };
 const SHUTDOWN_REASONS = [

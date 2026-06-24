@@ -41,6 +41,25 @@ function isMissingOptionalColumnError(error) {
   return /gps_|operation_|schema cache|could not find/i.test(error?.message || '');
 }
 
+function canRetryWithoutOperationColumns(payload) {
+  return (
+    payload?.operation_state === 'normal' &&
+    !payload?.operation_note &&
+    !payload?.operation_event_at
+  );
+}
+
+function stripOperationColumns(payload) {
+  const {
+    operation_state,
+    operation_note,
+    operation_event_at,
+    ...nextPayload
+  } = payload;
+
+  return nextPayload;
+}
+
 function normalizeReading(row, siteType) {
   return {
     ...row,
@@ -220,11 +239,22 @@ export async function createReading(payload) {
       ? buildChlorinationPayload(payload)
       : buildDeepwellPayload(payload);
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from(tableName)
     .insert(tablePayload)
     .select('id')
     .single();
+
+  if (error && isMissingOptionalColumnError(error) && canRetryWithoutOperationColumns(tablePayload)) {
+    const fallback = await supabase
+      .from(tableName)
+      .insert(stripOperationColumns(tablePayload))
+      .select('id')
+      .single();
+
+    data = fallback.data;
+    error = fallback.error;
+  }
 
   if (error) {
     throw error;
@@ -240,12 +270,24 @@ export async function updateReading(readingId, payload) {
       ? buildChlorinationPayload(payload)
       : buildDeepwellPayload(payload);
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from(tableName)
     .update(tablePayload)
     .eq('id', readingId)
     .select('id')
     .single();
+
+  if (error && isMissingOptionalColumnError(error) && canRetryWithoutOperationColumns(tablePayload)) {
+    const fallback = await supabase
+      .from(tableName)
+      .update(stripOperationColumns(tablePayload))
+      .eq('id', readingId)
+      .select('id')
+      .single();
+
+    data = fallback.data;
+    error = fallback.error;
+  }
 
   if (error) {
     throw error;

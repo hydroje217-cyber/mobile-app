@@ -1531,14 +1531,10 @@ export default function OfficeGraphsScreen({ navigation }) {
     try {
       const snapshot = await getOfficeDashboardSnapshot();
       const selectedMonthlyAnalytics = await getMonthlyAnalyticsForYear({ year: monthlyChartsYear });
-      const now = new Date();
-      const selectedDailyProduction =
-        dailyProductionMonth.getFullYear() === now.getFullYear() && dailyProductionMonth.getMonth() === now.getMonth()
-          ? snapshot.dailyProduction
-          : await getDailyProductionForMonth({
-              year: dailyProductionMonth.getFullYear(),
-              monthIndex: dailyProductionMonth.getMonth(),
-            });
+      const selectedDailyProduction = await getDailyProductionForMonth({
+        year: dailyProductionMonth.getFullYear(),
+        monthIndex: dailyProductionMonth.getMonth(),
+      });
       setMonthlyProduction(selectedMonthlyAnalytics.monthlyProduction || snapshot.monthlyProduction);
       setDailyProduction(selectedDailyProduction || { monthLabel: '', totalProduction: 0, rows: [] });
       setMonthlyChemicalUsage(selectedMonthlyAnalytics.monthlyChemicalUsage || snapshot.monthlyChemicalUsage || { totalChlorine: 0, totalPeroxide: 0, rows: [] });

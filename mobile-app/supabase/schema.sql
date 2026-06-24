@@ -101,6 +101,9 @@ create table if not exists public.readings (
   slot_datetime timestamptz not null,
   status text not null default 'submitted' check (status in ('submitted', 'approved', 'rejected')),
   remarks text,
+  operation_state text not null default 'normal',
+  operation_note text,
+  operation_event_at timestamptz,
   totalizer numeric,
   pressure_psi numeric,
   rc_ppm numeric,
@@ -173,6 +176,9 @@ create table if not exists public.deepwell_readings (
   slot_datetime timestamptz not null,
   status text not null default 'submitted' check (status in ('submitted', 'approved', 'rejected')),
   remarks text,
+  operation_state text not null default 'normal',
+  operation_note text,
+  operation_event_at timestamptz,
   upstream_pressure_psi numeric,
   downstream_pressure_psi numeric,
   flowrate_m3hr numeric,
@@ -229,6 +235,22 @@ add column if not exists gps_verified boolean not null default false;
 alter table public.chlorination_readings
 add column if not exists gps_checked_at timestamptz;
 
+alter table public.chlorination_readings
+add column if not exists operation_state text not null default 'normal';
+
+alter table public.chlorination_readings
+add column if not exists operation_note text;
+
+alter table public.chlorination_readings
+add column if not exists operation_event_at timestamptz;
+
+alter table public.chlorination_readings
+drop constraint if exists chlorination_readings_operation_state_check;
+
+alter table public.chlorination_readings
+add constraint chlorination_readings_operation_state_check
+check (operation_state in ('normal', 'shutdown', 'resumed'));
+
 alter table public.deepwell_readings
 add column if not exists gps_latitude numeric;
 
@@ -246,6 +268,22 @@ add column if not exists gps_verified boolean not null default false;
 
 alter table public.deepwell_readings
 add column if not exists gps_checked_at timestamptz;
+
+alter table public.deepwell_readings
+add column if not exists operation_state text not null default 'normal';
+
+alter table public.deepwell_readings
+add column if not exists operation_note text;
+
+alter table public.deepwell_readings
+add column if not exists operation_event_at timestamptz;
+
+alter table public.deepwell_readings
+drop constraint if exists deepwell_readings_operation_state_check;
+
+alter table public.deepwell_readings
+add constraint deepwell_readings_operation_state_check
+check (operation_state in ('normal', 'shutdown', 'resumed'));
 
 create unique index if not exists deepwell_readings_site_slot_unique
 on public.deepwell_readings (site_id, slot_datetime);

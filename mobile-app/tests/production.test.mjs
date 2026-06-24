@@ -478,6 +478,59 @@ try {
   assert.equal(monthlyProductionWithSummaries.rows[0].production, 1064);
   assert.equal(monthlyProductionWithSummaries.totalProduction, 1064);
 
+  const liveZeroProductionReadings = [
+    { site_id: 1, slot_datetime: '2026-06-10T23:00:00', totalizer: 1000 },
+    { site_id: 1, slot_datetime: '2026-06-11T07:00:00', totalizer: 1000 },
+    { site_id: 1, slot_datetime: '2026-06-11T15:00:00', totalizer: 1000 },
+    { site_id: 1, slot_datetime: '2026-06-11T23:00:00', totalizer: 1000 },
+    { site_id: 1, slot_datetime: '2026-06-12T07:00:00', totalizer: 1000 },
+    { site_id: 1, slot_datetime: '2026-06-12T15:00:00', totalizer: 1000 },
+    { site_id: 1, slot_datetime: '2026-06-12T23:00:00', totalizer: 1000 },
+  ];
+  const summaryProductionFallbacks = [
+    {
+      summary_date: '2026-06-11',
+      production_m3: 410,
+      site: { type: 'CHLORINATION' },
+    },
+    {
+      summary_date: '2026-06-12',
+      production_m3: 425,
+      site: { type: 'CHLORINATION' },
+    },
+  ];
+  const dailyProductionWithLiveZeros = buildDailyProduction(liveZeroProductionReadings, {
+    now: new Date('2026-06-12T12:00:00.000Z'),
+    dailySummaries: summaryProductionFallbacks,
+  });
+
+  assert.deepEqual(
+    dailyProductionWithLiveZeros.rows.map((row) => [row.date, row.production]),
+    [
+      ['2026-06-12', 425],
+      ['2026-06-11', 410],
+      ['2026-06-10', 0],
+      ['2026-06-09', 0],
+      ['2026-06-08', 0],
+      ['2026-06-07', 0],
+      ['2026-06-06', 0],
+      ['2026-06-05', 0],
+      ['2026-06-04', 0],
+      ['2026-06-03', 0],
+      ['2026-06-02', 0],
+      ['2026-06-01', 0],
+    ]
+  );
+
+  const monthlyProductionWithLiveZeros = buildMonthlyProduction(liveZeroProductionReadings, {
+    now: new Date('2026-06-30T12:00:00.000Z'),
+    monthCount: 1,
+    dailySummaries: summaryProductionFallbacks,
+  });
+
+  assert.equal(monthlyProductionWithLiveZeros.rows[0].production, 835);
+  assert.equal(monthlyProductionWithLiveZeros.totalProduction, 835);
+
   const monthlyPowerWithSummaries = buildMonthlyPowerConsumption(
     {
       chlorinationReadings: [

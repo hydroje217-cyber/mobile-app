@@ -651,7 +651,22 @@ function buildDailyAggregateMap(rows, valueKey) {
   }, new Map());
 }
 
-function mergeDailyMaps({ liveMap, summaryMap, preferSummary = false }) {
+function mergeDailyMaps({ liveMap, summaryMap, preferSummary = false, preferNonZeroSummary = false }) {
+  if (preferNonZeroSummary) {
+    const merged = new Map(liveMap);
+
+    summaryMap.forEach((summaryValue, date) => {
+      const parsedSummaryValue = parseProductionNumber(summaryValue);
+      const parsedLiveValue = parseProductionNumber(merged.get(date));
+
+      if (!merged.has(date) || (parsedSummaryValue !== null && parsedSummaryValue !== 0 && (parsedLiveValue === null || parsedLiveValue === 0))) {
+        merged.set(date, summaryValue);
+      }
+    });
+
+    return merged;
+  }
+
   const merged = preferSummary ? new Map(liveMap) : new Map(summaryMap);
   const overrideMap = preferSummary ? summaryMap : liveMap;
 
@@ -815,6 +830,7 @@ export function buildMonthlyProduction(readings, options = {}) {
       visibleFromDate,
       visibleToDate,
     }),
+    preferNonZeroSummary: true,
   });
 
   productionByDate.forEach((production, date) => {
@@ -877,6 +893,7 @@ export function buildDailyProduction(readings, options = {}) {
       visibleFromDate,
       visibleToDate,
     }),
+    preferNonZeroSummary: true,
   });
   const rows = [];
 
@@ -919,6 +936,7 @@ export function buildDailyProductionMonths(readings, options = {}) {
         visibleFromDate,
         visibleToDate,
       }),
+      preferNonZeroSummary: true,
     });
     const rows = [];
 

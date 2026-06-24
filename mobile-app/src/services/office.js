@@ -13,6 +13,7 @@ import {
 
 const DAILY_SUMMARY_SELECT =
   'id, site_id, summary_date, source, source_file, production_m3, power_kwh, chlorine_kg, peroxide_liters, site:sites(id, name, type)';
+const ANALYTICS_PAGE_SIZE = 1000;
 const PROFILE_SELECT = 'id, email, full_name, role, is_active, is_approved, approved_at, created_at, last_seen_at';
 const LOGIN_LOG_SELECT = 'id, user_id, email, role, browser, device, user_agent, created_at, profile:profiles(full_name, email)';
 const BASIC_LOGIN_LOG_SELECT = 'id, user_id, email, role, browser, device, user_agent, created_at';
@@ -45,6 +46,24 @@ function throwIfError(result, fallbackMessage) {
   if (result.error) {
     throw new Error(result.error.message || fallbackMessage);
   }
+}
+
+async function fetchAllAnalyticsRows(buildQuery, fallbackMessage) {
+  const rows = [];
+
+  for (let from = 0; ; from += ANALYTICS_PAGE_SIZE) {
+    const result = await buildQuery().range(from, from + ANALYTICS_PAGE_SIZE - 1);
+    throwIfError(result, fallbackMessage);
+
+    const page = result.data ?? [];
+    rows.push(...page);
+
+    if (page.length < ANALYTICS_PAGE_SIZE) {
+      break;
+    }
+  }
+
+  return rows;
 }
 
 function isMissingColumnError(error) {
@@ -415,34 +434,39 @@ export async function getMonthlyAnalyticsForYear({ year }) {
   }
 
   const range = getYearAnalyticsRange(parsedYear);
-  const [chlorinationReadingsResult, deepwellReadingsResult, summariesResult] = await Promise.all([
-    supabase
-      .from('chlorination_readings')
-      .select('id, site_id, status, created_at, reading_datetime, slot_datetime, totalizer, chlorine_consumed, peroxide_consumption, chlorination_power_kwh')
-      .gte('reading_datetime', range.readingFromIso)
-      .lt('reading_datetime', range.readingToIso)
-      .order('reading_datetime', { ascending: true }),
-    supabase
-      .from('deepwell_readings')
-      .select('id, site_id, status, created_at, reading_datetime, slot_datetime, power_kwh_shift')
-      .gte('reading_datetime', range.readingFromIso)
-      .lt('reading_datetime', range.readingToIso)
-      .order('reading_datetime', { ascending: true }),
-    supabase
-      .from('daily_site_summaries')
-      .select(DAILY_SUMMARY_SELECT)
-      .gte('summary_date', range.summaryFromDate)
-      .lte('summary_date', range.summaryToDate)
-      .order('summary_date', { ascending: true }),
+  const [chlorinationReadings, deepwellReadings, dailySummaries] = await Promise.all([
+    fetchAllAnalyticsRows(
+      () =>
+        supabase
+          .from('chlorination_readings')
+          .select('id, site_id, status, created_at, reading_datetime, slot_datetime, totalizer, chlorine_consumed, peroxide_consumption, chlorination_power_kwh')
+          .gte('reading_datetime', range.readingFromIso)
+          .lt('reading_datetime', range.readingToIso)
+          .order('reading_datetime', { ascending: true }),
+      'Failed to load selected year chlorination readings.'
+    ),
+    fetchAllAnalyticsRows(
+      () =>
+        supabase
+          .from('deepwell_readings')
+          .select('id, site_id, status, created_at, reading_datetime, slot_datetime, power_kwh_shift')
+          .gte('reading_datetime', range.readingFromIso)
+          .lt('reading_datetime', range.readingToIso)
+          .order('reading_datetime', { ascending: true }),
+      'Failed to load selected year deepwell readings.'
+    ),
+    fetchAllAnalyticsRows(
+      () =>
+        supabase
+          .from('daily_site_summaries')
+          .select(DAILY_SUMMARY_SELECT)
+          .gte('summary_date', range.summaryFromDate)
+          .lte('summary_date', range.summaryToDate)
+          .order('summary_date', { ascending: true }),
+      'Failed to load selected year daily summaries.'
+    ),
   ]);
 
-  throwIfError(chlorinationReadingsResult, 'Failed to load selected year chlorination readings.');
-  throwIfError(deepwellReadingsResult, 'Failed to load selected year deepwell readings.');
-  throwIfError(summariesResult, 'Failed to load selected year daily summaries.');
-
-  const dailySummaries = summariesResult.data ?? [];
-  const chlorinationReadings = chlorinationReadingsResult.data ?? [];
-  const deepwellReadings = deepwellReadingsResult.data ?? [];
   const options = {
     now: range.chartEnd,
     monthCount: range.monthCount,
@@ -470,27 +494,32 @@ export async function getDailyProductionForMonth({ year, monthIndex }) {
   }
 
   const range = getMonthProductionRange({ year: parsedYear, monthIndex: parsedMonthIndex });
-  const [readingsResult, summariesResult] = await Promise.all([
-    supabase
-      .from('chlorination_readings')
-      .select('id, site_id, status, created_at, reading_datetime, slot_datetime, totalizer')
-      .gte('reading_datetime', range.readingFromIso)
-      .lt('reading_datetime', range.readingToIso)
-      .order('reading_datetime', { ascending: true }),
-    supabase
-      .from('daily_site_summaries')
-      .select(DAILY_SUMMARY_SELECT)
-      .gte('summary_date', range.summaryFromDate)
-      .lte('summary_date', range.summaryToDate)
-      .order('summary_date', { ascending: true }),
+  const [readings, dailySummaries] = await Promise.all([
+    fetchAllAnalyticsRows(
+      () =>
+        supabase
+          .from('chlorination_readings')
+          .select('id, site_id, status, created_at, reading_datetime, slot_datetime, totalizer')
+          .gte('reading_datetime', range.readingFromIso)
+          .lt('reading_datetime', range.readingToIso)
+          .order('reading_datetime', { ascending: true }),
+      'Failed to load selected month production readings.'
+    ),
+    fetchAllAnalyticsRows(
+      () =>
+        supabase
+          .from('daily_site_summaries')
+          .select(DAILY_SUMMARY_SELECT)
+          .gte('summary_date', range.summaryFromDate)
+          .lte('summary_date', range.summaryToDate)
+          .order('summary_date', { ascending: true }),
+      'Failed to load selected month daily summaries.'
+    ),
   ]);
 
-  throwIfError(readingsResult, 'Failed to load selected month production readings.');
-  throwIfError(summariesResult, 'Failed to load selected month daily summaries.');
-
-  return buildDailyProduction(readingsResult.data ?? [], {
+  return buildDailyProduction(readings, {
     now: range.chartEnd,
-    dailySummaries: summariesResult.data ?? [],
+    dailySummaries,
   });
 }
 
@@ -516,9 +545,9 @@ export async function getOfficeDashboardSnapshot({ limit = 12, includeLoginLogs 
     profilesResult,
     loginLogsResult,
     siteOperationEventsResult,
-    monthlyChlorinationReadingsResult,
-    monthlyDeepwellReadingsResult,
-    dailySummariesResult,
+    monthlyChlorinationReadings,
+    monthlyDeepwellReadings,
+    dailySummaries,
   ] = await Promise.all([
     supabase
       .from('profiles')
@@ -561,21 +590,33 @@ export async function getOfficeDashboardSnapshot({ limit = 12, includeLoginLogs 
       .limit(20),
     fetchLoginLogs({ includeLoginLogs }),
     fetchSiteOperationEvents({ untilIso: tomorrowIso }),
-    supabase
-      .from('chlorination_readings')
-      .select('id, site_id, status, created_at, reading_datetime, slot_datetime, totalizer, chlorine_consumed, peroxide_consumption, chlorination_power_kwh')
-      .gte('reading_datetime', summaryReportAnalyticsIso)
-      .order('reading_datetime', { ascending: true }),
-    supabase
-      .from('deepwell_readings')
-      .select('id, site_id, status, created_at, reading_datetime, slot_datetime, power_kwh_shift')
-      .gte('reading_datetime', summaryReportAnalyticsIso)
-      .order('reading_datetime', { ascending: true }),
-    supabase
-      .from('daily_site_summaries')
-      .select(DAILY_SUMMARY_SELECT)
-      .gte('summary_date', summaryReportAnalyticsDate)
-      .order('summary_date', { ascending: true }),
+    fetchAllAnalyticsRows(
+      () =>
+        supabase
+          .from('chlorination_readings')
+          .select('id, site_id, status, created_at, reading_datetime, slot_datetime, totalizer, chlorine_consumed, peroxide_consumption, chlorination_power_kwh')
+          .gte('reading_datetime', summaryReportAnalyticsIso)
+          .order('reading_datetime', { ascending: true }),
+      'Failed to load monthly chlorination production.'
+    ),
+    fetchAllAnalyticsRows(
+      () =>
+        supabase
+          .from('deepwell_readings')
+          .select('id, site_id, status, created_at, reading_datetime, slot_datetime, power_kwh_shift')
+          .gte('reading_datetime', summaryReportAnalyticsIso)
+          .order('reading_datetime', { ascending: true }),
+      'Failed to load monthly deepwell power consumption.'
+    ),
+    fetchAllAnalyticsRows(
+      () =>
+        supabase
+          .from('daily_site_summaries')
+          .select(DAILY_SUMMARY_SELECT)
+          .gte('summary_date', summaryReportAnalyticsDate)
+          .order('summary_date', { ascending: true }),
+      'Failed to load historical daily summaries.'
+    ),
   ]);
 
   throwIfError(pendingApprovalsResult, 'Failed to load pending approvals.');
@@ -593,10 +634,6 @@ export async function getOfficeDashboardSnapshot({ limit = 12, includeLoginLogs 
     throwIfError(loginLogsResult, 'Failed to load login logs.');
   }
   throwIfError(siteOperationEventsResult, 'Failed to load site operation events.');
-  throwIfError(monthlyChlorinationReadingsResult, 'Failed to load monthly chlorination production.');
-  throwIfError(monthlyDeepwellReadingsResult, 'Failed to load monthly deepwell power consumption.');
-  throwIfError(dailySummariesResult, 'Failed to load historical daily summaries.');
-
   const recentReadings = [
     ...(recentChlorinationReadingsResult.data ?? []).map((row) => normalizeOfficeReading(row, 'CHLORINATION')),
     ...(recentDeepwellReadingsResult.data ?? []).map((row) => normalizeOfficeReading(row, 'DEEPWELL')),
@@ -608,10 +645,6 @@ export async function getOfficeDashboardSnapshot({ limit = 12, includeLoginLogs 
     ...(todayChlorinationSlotsResult.data ?? []).map((row) => normalizeOfficeReading(row, 'CHLORINATION')),
     ...(todayDeepwellSlotsResult.data ?? []).map((row) => normalizeOfficeReading(row, 'DEEPWELL')),
   ];
-  const monthlyChlorinationReadings = monthlyChlorinationReadingsResult.data ?? [];
-  const monthlyDeepwellReadings = monthlyDeepwellReadingsResult.data ?? [];
-  const dailySummaries = dailySummariesResult.data ?? [];
-
   return {
     stats: {
       totalOperators: totalOperatorsResult.count ?? 0,
